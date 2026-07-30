@@ -1,17 +1,19 @@
 {
     "name": "HiForms",
     "slug": "hi-forms",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "type": "plugin",
-    "description": "Panelden form kurun, içeriğe blok olarak yerleştirin. Gönderiler panelde birikir, e-posta bildirimi gider; KVKK onayı ve bal küpü spam koruması hazır gelir.",
+    "description": "Panelden form kurun, içeriğe blok olarak yerleştirin. Koşullu alanlar, sunucu tarafı doğrulama, e-posta bildirimi ve otomatik yanıt hazır gelir; bal küpü + süre tuzağı + gönderim aralığı sınırı istenmeyeni durdurur. Gönderiler panelde birikir, tek tek görüntülenir ve CSV olarak dışa aktarılır.",
     "author": "HiCMS",
     "repository": "rasidinnbugda/hi-forms",
     "license": "GPL-3.0-or-later",
     "requires": {
-        "hicms": "0.2.0",
+        "hicms": "0.3.0",
         "php": "8.2"
     },
-    "tags": ["form", "iletişim", "gönderi"],
+    "tags": ["form", "iletişim", "gönderi", "koşullu alan"],
+    "namespace": "HiForms\\",
+    "autoload": "src",
     "class": "HiForms\\Plugin",
     "main": "plugin.php"
 }

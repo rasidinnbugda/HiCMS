@@ -99,8 +99,9 @@ HiCMS/
 ├── themes/hiblog/       Varsayılan tema
 ├── plugins/             HiSEO · HiLang · HiTypes · HiForms · HiMedia
 ├── content/             Yüklemeler, yedekler, önbellek (yazılabilir olmalı)
-└── build/               lint.php · smoke.php · dbtest.php · updatetest.php
-                         upgradetest.php · make-zip.php · PLAN-0.3.0.md
+└── build/               lint.php · smoke.php · dbtest.php · plugintest.php
+                         updatetest.php · upgradetest.php · make-zip.php
+                         PLAN-0.3.0.md
 ```
 
 ---
@@ -364,8 +365,8 @@ geçici dosya temizliği.
 ## Geliştirme araçları
 
 ```bash
-php build/lint.php     # sözdizimi + autoloader denetimi (135 dosya)
-php build/smoke.php    # veritabanısız davranış testi (226 denetim)
+php build/lint.php     # sözdizimi + autoloader denetimi (167 dosya)
+php build/smoke.php    # veritabanısız davranış testi (273 denetim)
 php build/make-zip.php # dağıtım paketi üretir ve doğrular
 ```
 
@@ -409,6 +410,18 @@ geri gelir) ve `config.php`, `content/`, `themes/`, `plugins/` içeriğinin
 dokunulmadan kaldığını doğrular. Bu akış `admin/system.php` üzerinden yürür —
 güncelleme kendi çalıştığı dizini yeniden yazdığı için bazı hatalar yalnızca
 burada görünür.
+
+```bash
+php build/plugintest.php http://127.0.0.1:8130 3306 hicms_test
+```
+
+`plugintest.php` (40 denetim): **beş eklentiyi birlikte** sınar. Her eklenti
+kendi başına test edilebilir ama gerçek risk beşinin aynı anda etkin olması:
+kanca çakışması, aynı ada iki blok kaydı, çelişkili meta etiketi, kapatma
+sırasında birbirinin kancasını sökme. Beşini etkinleştirir, 11 panel sayfasını
+ve 5 eklenti ekranını gezer, ön yüzü denetler, meta etiketlerinin mükerrer
+basılmadığını doğrular, sonra ters sırayla kapatıp her adımda sitenin ve panelin
+sağlam kaldığını görür.
 
 ```bash
 php build/upgradetest.php /tmp/hicms-eski http://127.0.0.1:8196 3306 hicms_upgrade \

@@ -150,11 +150,50 @@ if ($app->request()->isPost()) {
         $termSelection[$taxonomy->name] = array_values(array_unique(array_filter($selected)));
     }
 
-    // Özel alanlar
-    $meta = [];
+    /*
+     * ÖZEL ALANLAR — GÖNDERİLMEYEN ALAN EZİLMEZ
+     *
+     * 0.2.0 her alan için koşulsuz `$_POST['alan'][key] ?? null` yazıyordu.
+     * Formda karşılığı olmayan bir alan (o sürümde repeater ve media-list) ya da
+     * bir eklentinin sonradan bildirdiği ama bu formda basılmayan bir alan,
+     * her kaydetmede boş değere düşüyordu — kullanıcı o alana hiç dokunmasa bile.
+     *
+     * Artık yalnızca POST'ta GERÇEKTEN bulunan alanlar yazılıyor. `switch`
+     * istisna: işaretsiz onay kutusu POST'a hiç girmez ve bu "kapalı" demektir,
+     * dolayısıyla yokluğu bilgi taşır.
+     */
+    $meta   = [];
+    $posted = (array) ($_POST['alan'] ?? []);
 
     foreach ($type->fields as $field) {
-        $meta[$field->key] = $field->sanitize($_POST['alan'][$field->key] ?? null);
+        $present = array_key_exists($field->key, $posted);
+
+        if (!$present && $field->type !== 'switch') {
+            continue;
+        }
+
+        $clean = $field->sanitize($present ? $posted[$field->key] : null);
+
+        /*
+         * Yinelenen grupta bozuk JSON: temizleyici boş dizi döndürür ama
+         * kullanıcının yazım hatası veri kaybına çevrilmemeli. Gelen metin boş
+         * DEĞİLKEN sonuç boş çıktıysa yazma atlanır ve kullanıcı uyarılır.
+         */
+        if (
+            $field->type === 'repeater'
+            && $clean === []
+            && is_string($posted[$field->key] ?? null)
+            && trim((string) $posted[$field->key]) !== ''
+        ) {
+            admin_flash(
+                'warning',
+                Str::format('"%s" alanı okunamadı (geçersiz JSON); önceki değeri korundu.', $field->label)
+            );
+
+            continue;
+        }
+
+        $meta[$field->key] = $clean;
     }
 
     /*
@@ -399,14 +438,46 @@ admin_head($page);
                                     'media'  => ui_input($name, (string) $value, [
                                         'type' => 'number', 'id' => $inputId, 'placeholder' => 'Medya kimliği',
                                     ]),
+
+                                    /*
+                                     * media-list ve repeater'ın KENDİ kolları olmak zorunda.
+                                     *
+                                     * 0.2.0'da ikisi de `default` koluna düşüyordu ve değerleri
+                                     * dizi olduğu için `is_scalar($value) ? … : ''` BOŞ bir metin
+                                     * kutusu basıyordu. Kullanıcı hiçbir şeye dokunmadan içeriği
+                                     * kaydettiğinde o boş değer yazılıyor ve kayıtlı liste
+                                     * SİLİNİYORDU — sessiz veri kaybı.
+                                     */
+                                    'media-list' => '<textarea class="input mono" id="' . esc_attr($inputId)
+                                        . '" name="' . esc_attr($name) . '" rows="3">'
+                                        . esc_html(is_array($value) ? implode(', ', array_map('strval', $value)) : '')
+                                        . '</textarea>',
+
+                                    'repeater' => '<textarea class="input mono" id="' . esc_attr($inputId)
+                                        . '" name="' . esc_attr($name) . '" rows="8">'
+                                        . esc_html(is_array($value)
+                                            ? (string) json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE
+                                                | JSON_UNESCAPED_SLASHES)
+                                            : '')
+                                        . '</textarea>',
+
                                     default  => ui_input($name, is_scalar($value) ? (string) $value : '', [
                                         'id' => $inputId, 'placeholder' => $field->placeholder,
                                     ]),
                                 };
 
+                                // İki tür için biçim ipucu yardım metnine eklenir.
+                                $help = $field->help;
+
+                                if ($field->type === 'media-list') {
+                                    $help = trim($help . ' Medya kimlikleri, virgül ya da satır sonuyla ayrılmış.');
+                                } elseif ($field->type === 'repeater') {
+                                    $help = trim($help . ' JSON dizisi. Bozuk JSON kaydedilmez, mevcut değer korunur.');
+                                }
+
                                 echo $field->type === 'switch'
                                     ? '<div class="field">' . $control . '</div>'
-                                    : ui_field($field->label, $control, esc_html($field->help), $inputId, $field->required);
+                                    : ui_field($field->label, $control, esc_html($help), $inputId, $field->required);
                                 ?>
                             <?php endforeach; ?>
                         </div>

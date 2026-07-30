@@ -1,0 +1,93 @@
+/* =========================================================================
+   HiTypes — alan düzenleyici biçimi
+   -------------------------------------------------------------------------
+   Yalnızca `hit-` önekli sınıflar tanımlanır: panelin belirteçleri (renk,
+   boşluk, yarıçap, yazı ölçeği) olduğu gibi kullanılır, hiçbiri yeniden
+   tanımlanmaz. Böylece aydınlık/karanlık tema ve yoğunluk sözleşmesi
+   çekirdekten gelir; eklenti sürüklenmez.
+   ========================================================================= */
+
+.hit-row {
+    padding: var(--s2) var(--s3);
+    margin-bottom: var(--s2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--surface);
+}
+
+.hit-row:focus-within { border-color: var(--line-strong); }
+.hit-row:last-child { margin-bottom: 0; }
+
+/* Başlık satırı: anahtar, etiket, tür ve çıkarma düğmesi TEK SATIRDA. */
+.hit-head {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+}
+
+.hit-no {
+    flex: none;
+    width: 16px;
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    color: var(--ink-4);
+    text-align: right;
+}
+
+.hit-head .input { min-width: 0; }
+.hit-head [data-hit-key] { flex: 0 1 150px; }
+.hit-head [data-hit-label] { flex: 1 1 150px; }
+.hit-head .select { flex: 0 1 170px; }
+.hit-head .icon-btn { flex: none; }
+
+/* İkincil alanlar: iki kolon, başlık satırından daha sessiz. */
+.hit-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s2);
+    margin-top: var(--s2);
+}
+
+.hit-grid > span { display: block; min-width: 0; }
+/*
+ * `hidden` özniteliği yazar biçimini yenemez: yukarıdaki `display: block`
+ * kuralı tarayıcının [hidden] kuralını ezerdi ve JS kutuyu saklayamazdı.
+ * Bu yüzden gizli hâl açıkça yazılıyor.
+ */
+.hit-grid > span[hidden] { display: none; }
+.hit-req { align-items: center; font-size: var(--fs-sm); color: var(--ink-2); }
+
+/* Türe bağlı kutular. JS kapalıyken hepsi açık durur. */
+.hit-when { margin-top: var(--s2); }
+.hit-when > .label { margin-bottom: var(--s1); }
+
+/* Yinelenen grubun alt alanları — kesikli çerçeve iç içeliği anlatır. */
+.hit-sub {
+    padding: var(--s2) var(--s3);
+    border: 1px dashed var(--line-strong);
+    border-radius: var(--r-sm);
+    background: var(--surface-2);
+}
+
+.hit-sub > .label { margin-bottom: var(--s1); }
+.hit-row.is-sub { margin-bottom: var(--s1); padding: var(--s1) var(--s2); }
+.hit-row.is-sub .hit-head { gap: var(--s1); }
+.hit-row.is-sub .hit-when { margin-top: var(--s1); }
+
+.hit-add {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    margin-top: var(--s2);
+}
+
+.hit-add .hint { margin: 0; }
+.hit-add .btn[disabled] { opacity: .5; pointer-events: none; }
+
+@media (max-width: 760px) {
+    .hit-head { flex-wrap: wrap; }
+    .hit-head [data-hit-key],
+    .hit-head [data-hit-label],
+    .hit-head .select { flex: 1 1 100%; }
+    .hit-grid { grid-template-columns: minmax(0, 1fr); }
+}

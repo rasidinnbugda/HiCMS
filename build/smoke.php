@@ -585,6 +585,79 @@ $owners->emit('test.kanca');
 check('b sökülünce çekirdek yine kalır', $trace === ['çekirdek'], implode(',', $trace));
 
 /* -------------------------------------------------------------------------
+ * 6b0. Özel alan türleri formdan düzenlenebilir
+ * -------------------------------------------------------------------------
+ * 0.2.0'da `media-list` ve `repeater` alanlarının panelden düzenlenmesi
+ * mümkün değildi VE her kaydetme değerlerini SİLİYORDU: content-edit.php'de
+ * bu iki tür için kol yoktu, `default` koluna düşüp boş metin kutusu basıyor,
+ * sonra o boş değer meta'ya yazılıyordu. Kullanıcı alana hiç dokunmasa bile.
+ * ---------------------------------------------------------------------- */
+
+echo "\nÖzel alan türleri\n";
+
+$mediaList = HiCMS\Content\Field::fromArray([
+    'key' => 'galeri', 'type' => 'media-list', 'label' => 'Galeri',
+]);
+
+check('media-list dizi kabul eder', $mediaList->sanitize([3, 7, 9]) === [3, 7, 9]);
+check('media-list virgüllü dizge kabul eder', $mediaList->sanitize('3, 7, 9') === [3, 7, 9],
+    json_encode($mediaList->sanitize('3, 7, 9')));
+check('media-list satır sonu kabul eder', $mediaList->sanitize("3\n7\n9") === [3, 7, 9]);
+check('media-list sıfır ve tekrarı düşürür', $mediaList->sanitize('3,7,3,0,7') === [3, 7],
+    json_encode($mediaList->sanitize('3,7,3,0,7')));
+check('media-list geçersiz girdide boş döner', $mediaList->sanitize('abc') === []);
+
+$repeater = HiCMS\Content\Field::fromArray([
+    'key' => 'sss', 'type' => 'repeater', 'label' => 'SSS',
+    'fields' => [
+        ['key' => 'soru', 'type' => 'text'],
+        ['key' => 'cevap', 'type' => 'textarea'],
+    ],
+]);
+
+$repeaterJson = json_encode([['soru' => 'Nedir?', 'cevap' => 'Budur.']], JSON_UNESCAPED_UNICODE);
+
+check(
+    'repeater JSON dizgesi kabul eder',
+    $repeater->sanitize($repeaterJson) === [['soru' => 'Nedir?', 'cevap' => 'Budur.']],
+    json_encode($repeater->sanitize($repeaterJson), JSON_UNESCAPED_UNICODE)
+);
+
+check(
+    'repeater dizi de kabul eder',
+    $repeater->sanitize([['soru' => 'A', 'cevap' => 'B']]) === [['soru' => 'A', 'cevap' => 'B']]
+);
+
+check('repeater bozuk JSON\'da boş döner', $repeater->sanitize('{bozuk') === []);
+
+// content-edit.php'de iki tür için gerçekten kol var mı? (kaynak denetimi)
+$editSource = (string) file_get_contents($root . '/admin/content-edit.php');
+
+check(
+    'content-edit.php media-list kolunu içeriyor',
+    str_contains($editSource, "'media-list' =>")
+);
+check(
+    'content-edit.php repeater kolunu içeriyor',
+    str_contains($editSource, "'repeater' =>")
+);
+check(
+    'gönderilmeyen özel alan ezilmiyor',
+    str_contains($editSource, "array_key_exists(\$field->key, \$posted)")
+);
+
+/*
+ * Eklenti çıktısı bölge değişiminde taşınıyor mu? hi_admin_data() ve
+ * hi_admin_script() admin.footer'a basıyor, yani </main> dışına; nav.js o kabı
+ * da değiştirmezse eklenti verisi anında geçişte hiç gelmez.
+ */
+$navSource = (string) file_get_contents($root . '/admin/assets/js/nav.js');
+$uiSource  = (string) file_get_contents($root . '/admin/includes/ui.php');
+
+check('nav.js eklenti kabını bölge sayıyor', str_contains($navSource, '#hi-plugin-slot'));
+check('ui.php eklenti kabını basıyor', str_contains($uiSource, 'id="hi-plugin-slot"'));
+
+/* -------------------------------------------------------------------------
  * 6ba. Modern görsel biçimleri
  * -------------------------------------------------------------------------
  * HiMedia'nın ürettiği WebP dosyası 0.2.0'da diskte duruyor ama hiçbir yerde

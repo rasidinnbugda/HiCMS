@@ -459,7 +459,18 @@ function admin_foot(): void
 ?>
 <script src="<?= esc_attr(admin_asset('assets/js/nav.js')) ?>"></script>
 <script src="<?= esc_attr(admin_asset('assets/js/palette.js')) ?>"></script>
-<?php hi()->events()->emit('admin.footer'); ?>
+<?php
+/*
+ * Eklenti çıktısı SARMALANMIŞ bir kapta durur.
+ *
+ * hi_admin_data() ve hi_admin_script() bu kancaya basıyor, yani çıktı </main>
+ * sonrasında geliyor. nav.js bölge değişiminde bu kabı da değiştiriyor
+ * (#hi-plugin-slot); kap olmasaydı eklenti verisi ve betiği anında geçişte hiç
+ * gelmez, sayfaya doğrudan girildiğinde çalışıp listeden geçilince çalışmayan
+ * bir ekran doğardı.
+ */
+?>
+<div id="hi-plugin-slot"><?php hi()->events()->emit('admin.footer'); ?></div>
 </body>
 </html>
     <?php

@@ -5,45 +5,93 @@ declare(strict_types=1);
 namespace HiSEO;
 
 use HiCMS\Events\Admin\MenuBuilding;
-use HiCMS\Events\Content\Saved;
+use HiCMS\Extension\Settings;
+use HiCMS\Http\Request;
 use HiCMS\Http\Response;
 use HiCMS\Http\Router;
-use HiCMS\Kernel;
 use HiCMS\Plugin\Plugin as BasePlugin;
-use HiCMS\Support\Dates;
-use HiCMS\Support\Str;
 
 /**
  * HiSEO — arama motoru paketi
  *
- * Dört iş yapar:
- *   1. `/sitemap.xml` ve `/robots.txt` üretir (içerik kaydedildikçe tazelenir)
- *   2. Sayfa başına JSON-LD yapısal veri ve paylaşım etiketleri basar
- *   3. 301 yönlendirme yöneticisi — eski siteden taşınırken bağlantıları kurtarır
- *   4. İçerik düzenleyicide kısa bir SEO denetimi gösterir
+ * Altı iş yapar:
+ *   1. İçerik başına arama başlığı / açıklaması (content_meta üzerinde)
+ *   2. `<head>` etiketleri: title, description, canonical, robots, og:*, twitter:*
+ *   3. JSON-LD yapısal veri (WebSite, BlogPosting, BreadcrumbList)
+ *   4. İçerik türüne göre bölünmüş XML site haritası + robots.txt yönetimi
+ *   5. 301/302/307/308 yönlendirme yöneticisi (joker karakterli kaynak dahil)
+ *   6. 404 yakalayıcı: kırılan her adres birikir, panel yönlendirme önerir
  *
- * Hiçbir işlev çekirdeğe sızmaz: eklenti kapatıldığında rotalar ve etiketler
- * kaybolur, içerik olduğu gibi kalır.
+ * Hiçbir işlev çekirdeğe sızmaz. Eklenti kapatıldığında `forgetOwner()` bütün
+ * kancaları söker; rotalar, etiketler ve panel ekranı kaybolur, içerik ve
+ * yönlendirme tabloları olduğu gibi kalır.
+ *
+ * 0.3.0 SÖZLEŞMELERİ
+ *   • Ayarlar `hi_settings('hi-seo')` ile bildirimsel: tek option satırı,
+ *     temizleme ve varsayılan birleştirme çekirdeğin işi. Elle option okuma yok.
+ *   • `forget()` KULLANILMAZ — kancaları çekirdek söker (bkz. PluginManager).
+ *   • Panel verisi `hi_admin_data()` ile JSON olarak basılır; satır içi
+ *     `<script>window.X = …</script>` anında sayfa geçişinde çalışmaz.
  */
 final class Plugin extends BasePlugin
 {
+    /** Panel ekranının kendi adresi. */
+    public const SELF_URL = 'plugin.php?eklenti=hi-seo';
+
     public function boot(): void
     {
-        // Rotalar
-        hi_on('routing.register', function (Router $router): void {
-            $router->get('/sitemap.xml', fn(): Response => $this->sitemap(), 'seo.sitemap', 1);
-            $router->get('/robots.txt', fn(): Response => $this->robots(), 'seo.robots', 1);
+        $settings  = self::settings();
+        $entrySeo  = new EntrySeo();
+        $meta      = new Meta($settings, $entrySeo);
+        $sitemap   = new Sitemap($settings, $entrySeo);
+        $redirects = new Redirects($settings);
+
+        /* --------------------------------------------------------------
+         * Ön yüz rotaları
+         * ----------------------------------------------------------- */
+
+        hi_on('routing.register', static function (Router $router) use ($settings, $sitemap): void {
+            if ((bool) $settings->get('sitemap', true)) {
+                $router->get('/sitemap.xml', static fn(): Response => $sitemap->index(), 'seo.sitemap', 1);
+
+                /*
+                 * Site haritası içerik türüne göre bölünür; dizin dosyası
+                 * çocuklarını buradan adresler. Yer tutucu kısıtı daraltıldı
+                 * ki "/sitemap-<herhangi bir şey>.xml" isteği tür adı
+                 * ayrıştırmasını zorlamasın.
+                 */
+                $router->get(
+                    '/sitemap-{parca:[a-z0-9_-]+}.xml',
+                    static fn(array $params): Response => $sitemap->part((string) $params['parca']),
+                    'seo.sitemap.part',
+                    1
+                );
+            }
+
+            if ((bool) $settings->get('robots', true)) {
+                $router->get('/robots.txt', static fn(): Response => $sitemap->robots(), 'seo.robots', 1);
+            }
         });
 
-        // Yönlendirmeler istek çözülmeden önce denetlenir.
-        hi_on('routing.before', function ($request): void {
-            $this->maybeRedirect((string) $request->path);
+        // Yönlendirmeler istek çözülmeden önce denetlenir; 404 kaydı ise
+        // yanıt gönderildikten sonra (durum kodu belli olunca) yazılır.
+        hi_on('routing.before', static function (Request $request) use ($redirects): void {
+            $redirects->handle($request);
         });
 
-        // <head> etiketleri
-        hi_on('theme.head', fn(): null => $this->head());
+        /* --------------------------------------------------------------
+         * <head> — başlık, açıklama, etiketler
+         * ----------------------------------------------------------- */
 
-        // Panel menüsü + ekran
+        hi_add_filter('theme.document_title', static fn(mixed $title): string => $meta->title($title));
+        hi_add_filter('theme.meta_description', static fn(mixed $text): string => $meta->description($text));
+
+        hi_on('theme.head', static fn(): null => $meta->head());
+
+        /* --------------------------------------------------------------
+         * Panel
+         * ----------------------------------------------------------- */
+
         hi_listen(MenuBuilding::class, static function (MenuBuilding $event): void {
             if (!hi()->auth()->can('settings.manage')) {
                 return;
@@ -53,461 +101,150 @@ final class Plugin extends BasePlugin
                 'slug'  => 'plugin:hi-seo',
                 'label' => 'SEO',
                 'icon'  => 'target',
-                'url'   => 'plugin.php?eklenti=hi-seo',
+                'url'   => self::SELF_URL,
             ]);
         });
 
-        hi_on('admin.page.hi-seo', fn(): null => $this->screen());
+        /*
+         * Varlık adresleri SÜRÜMLE damgalanır. `admin_asset()` yalnızca çekirdek
+         * dosyalarını damgalıyor; eklenti kendi damgasını basmazsa güncellemeden
+         * sonra tarayıcı eski betiği servis eder.
+         */
+        $stamp     = '?v=' . rawurlencode($this->manifest()->version);
+        $scriptUrl = $this->assetUrl('assets/js/seo.js') . $stamp;
+        $styleUrl  = $this->assetUrl('assets/css/seo.css') . $stamp;
 
-        // İçerik kaydedildiğinde sitemap önbelleğini düşür.
-        hi_listen(Saved::class, function (): void {
-            $this->setOption('sitemap_stamp', time());
+        hi_on('admin.page.hi-seo', static function () use (
+            $settings,
+            $entrySeo,
+            $redirects,
+            $sitemap,
+            $scriptUrl,
+            $styleUrl
+        ): null {
+            return (new Screen($settings, $entrySeo, $redirects, $sitemap, $scriptUrl, $styleUrl))->render();
         });
-    }
-
-    public function activate(): void
-    {
-        $this->setOption('json_ld', true);
-        $this->setOption('sitemap', true);
-    }
-
-    /* ---------------------------------------------------------------------
-     * Sitemap ve robots
-     * ------------------------------------------------------------------ */
-
-    private function sitemap(): Response
-    {
-        $urls = [];
-        $base = hi()->urls()->to();
-
-        $urls[] = ['loc' => $base, 'priority' => '1.0', 'changefreq' => 'daily'];
-
-        foreach (hi()->types()->publicTypes() as $type) {
-            if ($type->hasArchive()) {
-                $urls[] = [
-                    'loc'        => hi()->links()->forArchive($type),
-                    'priority'   => '0.7',
-                    'changefreq' => 'weekly',
-                ];
-            }
-
-            $entries = hi()->content()->get([
-                'type'          => $type->name,
-                'visibleOnly'   => true,
-                'perPage'       => 0,
-                'withRelations' => false,
-            ]);
-
-            foreach ($entries as $entry) {
-                $urls[] = [
-                    'loc'        => hi()->links()->forEntry($entry),
-                    'lastmod'    => Dates::iso($entry->updatedAt !== '' ? $entry->updatedAt : $entry->publishedAt),
-                    'priority'   => $type->name === 'page' ? '0.6' : '0.8',
-                    'changefreq' => 'monthly',
-                ];
-            }
-        }
-
-        foreach (hi()->types()->taxonomies() as $taxonomy) {
-            if (!$taxonomy->isPublic) {
-                continue;
-            }
-
-            foreach (hi()->terms()->forTaxonomy($taxonomy->name, true, true) as $term) {
-                $urls[] = [
-                    'loc'        => hi()->links()->forTerm($term),
-                    'priority'   => '0.5',
-                    'changefreq' => 'weekly',
-                ];
-            }
-        }
-
-        $xml = '<?xml version="1.0" encoding="UTF-8"?>' . "\n"
-            . '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
-
-        foreach ($urls as $url) {
-            $xml .= '  <url>' . "\n"
-                . '    <loc>' . Str::html($url['loc']) . '</loc>' . "\n"
-                . (($url['lastmod'] ?? '') !== '' ? '    <lastmod>' . Str::html($url['lastmod']) . '</lastmod>' . "\n" : '')
-                . '    <changefreq>' . Str::html($url['changefreq']) . '</changefreq>' . "\n"
-                . '    <priority>' . Str::html($url['priority']) . '</priority>' . "\n"
-                . '  </url>' . "\n";
-        }
-
-        return Response::xml($xml . '</urlset>');
-    }
-
-    private function robots(): Response
-    {
-        $indexable = (bool) hi_option('search_engine_index', true);
-
-        $body = "User-agent: *\n";
-
-        if (!$indexable) {
-            $body .= "Disallow: /\n";
-        } else {
-            $body .= "Allow: /\n"
-                . "Disallow: /admin/\n"
-                . "Disallow: /install.php\n"
-                . "Disallow: /content/backups/\n"
-                . "Disallow: /content/tmp/\n"
-                . "Disallow: /arama\n";
-        }
-
-        $custom = trim((string) $this->option('robots_extra', ''));
-
-        if ($custom !== '') {
-            $body .= "\n" . $custom . "\n";
-        }
-
-        $body .= "\nSitemap: " . hi()->urls()->to('sitemap.xml') . "\n";
-
-        return Response::text($body);
-    }
-
-    /* ---------------------------------------------------------------------
-     * <head> etiketleri
-     * ------------------------------------------------------------------ */
-
-    private function head(): null
-    {
-        echo '<link rel="canonical" href="' . Str::url($this->canonical()) . '">' . "\n";
-
-        if (!$this->option('json_ld', true)) {
-            return null;
-        }
-
-        $data = $this->structuredData();
-
-        if ($data !== []) {
-            echo '<script type="application/ld+json">'
-                . (string) json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
-                . '</script>' . "\n";
-        }
-
-        return null;
-    }
-
-    private function canonical(): string
-    {
-        $view = hi_view();
-
-        return match ($view->kind) {
-            'single', 'page' => $view->entry !== null ? hi()->links()->forEntry($view->entry) : hi()->urls()->to(),
-            'taxonomy'       => $view->term !== null ? hi()->links()->forTermPage($view->term, $view->page) : hi()->urls()->to(),
-            'archive'        => $view->contentType !== null ? hi()->links()->forArchive($view->contentType, $view->page) : hi()->urls()->to(),
-            'author'         => $view->author !== null ? hi()->links()->forAuthor($view->author, $view->page) : hi()->urls()->to(),
-            default          => hi()->links()->forHome($view->page),
-        };
     }
 
     /**
-     * @return array<string, mixed>
+     * Ayar tanımı.
+     *
+     * Bildirimsel: alanlar tarif edilir, formu basmak / doğrulamak / temizlemek
+     * / saklamak çekirdeğin işi olur. Tanım istek başına bir kez kurulur;
+     * `hi_settings()` eklenti başına aynı nesneyi döndürdüğü için ekran, ön yüz
+     * ve site haritası aynı tanımı paylaşır.
      */
-    private function structuredData(): array
+    public static function settings(): Settings
     {
-        $view = hi_view();
-        $site = hi_site_name();
+        $settings = hi_settings('hi-seo');
 
-        if ($view->isSingular() && $view->entry !== null) {
-            $entry = $view->entry;
-
-            $data = [
-                '@context'      => 'https://schema.org',
-                '@type'         => $entry->type === 'page' ? 'WebPage' : 'BlogPosting',
-                'headline'      => $entry->title,
-                'description'   => $entry->summary(200),
-                'url'           => hi()->links()->forEntry($entry),
-                'datePublished' => Dates::iso($entry->publishedAt),
-                'dateModified'  => Dates::iso($entry->updatedAt !== '' ? $entry->updatedAt : $entry->publishedAt),
-                'publisher'     => ['@type' => 'Organization', 'name' => $site],
-            ];
-
-            if ($entry->author !== null) {
-                $data['author'] = [
-                    '@type' => 'Person',
-                    'name'  => $entry->author->displayName,
-                    'url'   => hi()->links()->forAuthor($entry->author),
-                ];
-            }
-
-            if ($entry->image !== null) {
-                $data['image'] = hi()->urls()->uploads($entry->image->path);
-            }
-
-            return $data;
+        if ($settings->sections() !== []) {
+            return $settings;
         }
 
-        return [
-            '@context'    => 'https://schema.org',
-            '@type'       => 'WebSite',
-            'name'        => $site,
-            'url'         => hi()->urls()->to(),
-            'description' => (string) hi_option('site_description', ''),
-        ];
+        $settings->section('genel', 'Genel', [
+            ['key' => 'title_pattern', 'type' => 'text', 'label' => 'Başlık kalıbı',
+             'default' => '%baslik% · %site%',
+             'placeholder' => '%baslik% · %site%',
+             'help' => 'Yer tutucular: %baslik%, %site%, %slogan%, %sayfa%. Boş bırakılırsa '
+                . 'çekirdeğin başlığı kullanılır.'],
+            ['key' => 'home_title', 'type' => 'text', 'label' => 'Ana sayfa başlığı',
+             'default' => '', 'help' => 'Boşsa site adı ve slogan kullanılır.'],
+            ['key' => 'default_description', 'type' => 'textarea', 'label' => 'Yedek açıklama',
+             'rows' => 3, 'default' => '',
+             'help' => 'İçeriğin kendi açıklaması ve özeti yoksa bu metin basılır.'],
+            ['key' => 'default_image', 'type' => 'text', 'label' => 'Yedek paylaşım görseli',
+             'default' => '', 'placeholder' => 'https://…/paylasim.jpg',
+             'help' => 'Öne çıkan görseli olmayan sayfalar için og:image adresi. Etkin tema kendi '
+                . 'og:image etiketini basıyorsa bu adres yalnızca "Her zaman bas" modunda kullanılır.'],
+        ], 'Arama sonucunda ve paylaşımda görünen metinler.');
+
+        $settings->section('etiket', 'Etiketler', [
+            ['key' => 'json_ld', 'type' => 'switch', 'label' => 'JSON-LD yapısal veri', 'default' => true,
+             'help' => 'WebSite, BlogPosting ve BreadcrumbList şemaları basılır.'],
+            ['key' => 'og_mode', 'type' => 'select', 'label' => 'Paylaşım etiketleri (og:*, twitter:*)',
+             'default' => 'auto',
+             'options' => [
+                 'auto'   => 'Otomatik — temanın basmadıklarını tamamla',
+                 'always' => 'Her zaman bas',
+                 'off'    => 'Basma',
+             ],
+             'help' => 'Otomatik seçenekte etkin temanın şablonları taranır ve yalnızca eksik '
+                . 'etiketler eklenir; hiçbir etiket iki kez yazılmaz.'],
+            ['key' => 'twitter_card', 'type' => 'select', 'label' => 'Twitter kartı',
+             'default' => 'summary_large_image',
+             'options' => [
+                 'summary_large_image' => 'Büyük görsel',
+                 'summary'             => 'Özet',
+             ]],
+            ['key' => 'twitter_site', 'type' => 'text', 'label' => 'Twitter hesabı', 'default' => '',
+             'placeholder' => '@site', 'help' => 'twitter:site etiketine yazılır.'],
+            ['key' => 'noindex_search', 'type' => 'switch', 'label' => 'Arama sonuçlarını dizine ekleme',
+             'default' => true],
+            ['key' => 'noindex_archives', 'type' => 'switch', 'label' => 'Arşivleri dizine ekleme',
+             'default' => false, 'help' => 'Kategori, etiket, tür arşivi ve yazar sayfaları.'],
+            ['key' => 'noindex_paged', 'type' => 'switch', 'label' => 'İkinci ve sonraki sayfaları dizine ekleme',
+             'default' => false],
+        ], 'Hangi etiketlerin basıldığı ve neyin dizine girmediği.');
+
+        $settings->section('sitemap', 'Site haritası', [
+            ['key' => 'sitemap', 'type' => 'switch', 'label' => '/sitemap.xml üret', 'default' => true,
+             'help' => 'Kapatılırsa adres 404 döner.'],
+            ['key' => 'sitemap_terms', 'type' => 'switch', 'label' => 'Taksonomi terimlerini ekle',
+             'default' => true],
+            ['key' => 'sitemap_authors', 'type' => 'switch', 'label' => 'Yazar arşivlerini ekle',
+             'default' => false],
+            ['key' => 'sitemap_chunk', 'type' => 'number', 'label' => 'Dosya başına adres',
+             'default' => 500, 'help' => 'Aşıldığında tür kendi içinde parçalanır (50–5000).'],
+            ['key' => 'sitemap_exclude', 'type' => 'lines', 'label' => 'Dışlanan içerik türleri',
+             'default' => [], 'rows' => 3, 'help' => 'Her satıra bir tür adı (örnek: page).'],
+        ], 'Arama motorlarına verilen adres listesi.');
+
+        $settings->section('robots', 'robots.txt', [
+            ['key' => 'robots', 'type' => 'switch', 'label' => '/robots.txt üret', 'default' => true],
+            ['key' => 'robots_sitemap', 'type' => 'switch', 'label' => 'Sitemap satırı ekle', 'default' => true],
+            ['key' => 'crawl_delay', 'type' => 'number', 'label' => 'Crawl-delay', 'default' => 0,
+             'help' => '0 ise satır basılmaz.'],
+            ['key' => 'robots_disallow', 'type' => 'lines', 'label' => 'Ek Disallow yolları',
+             'default' => [], 'rows' => 3, 'help' => 'Her satıra bir yol (örnek: /gizli).'],
+            ['key' => 'robots_extra', 'type' => 'code', 'label' => 'Serbest ek', 'default' => '',
+             'rows' => 4, 'help' => 'Otomatik kuralların altına olduğu gibi eklenir.'],
+        ], 'Tarayıcılara verilen kurallar.');
+
+        $settings->section('yonlendirme', 'Yönlendirme', [
+            ['key' => 'keep_query', 'type' => 'switch', 'label' => 'Sorgu dizesini hedefe taşı',
+             'default' => false, 'help' => 'Hedefte zaten ? varsa taşınmaz.'],
+            ['key' => 'log_404', 'type' => 'switch', 'label' => 'Bulunamayan adresleri kaydet',
+             'default' => true],
+            ['key' => 'log_404_max', 'type' => 'number', 'label' => 'Kayıt sınırı', 'default' => 300,
+             'help' => 'Aşılınca en eski isabetli satırlar silinir (20–5000).'],
+            ['key' => 'suggest', 'type' => 'switch', 'label' => 'Yönlendirme önerisi hesapla',
+             'default' => true, 'help' => 'Kırılan adresi mevcut kısa adlarla karşılaştırır.'],
+        ], '404 alan adresler ve kurtarma kuralları.');
+
+        return $settings;
     }
 
-    /* ---------------------------------------------------------------------
-     * Yönlendirmeler
-     * ------------------------------------------------------------------ */
-
-    private function maybeRedirect(string $path): void
+    /**
+     * Etkinleştirmede ayar satırı açıkça yazılır.
+     *
+     * Gerekli değil (okuma varsayılanlarla birleşiyor) ama satırın var olması
+     * yedek dosyasında ve tanılamada ayarların görünmesini sağlıyor.
+     */
+    public function activate(): void
     {
-        $db = hi()->db();
-
-        if (!$db->tableExists('seo_redirects')) {
-            return;
-        }
-
-        $source = '/' . trim($path, '/');
-
-        $row = $db->builder('seo_redirects')->where('source', $source)->first();
-
-        if ($row === null) {
-            return;
-        }
-
-        $db->update('seo_redirects', [
-            'hits'        => (int) $row['hits'] + 1,
-            'last_hit_at' => Dates::stamp(),
-        ], ['id' => (int) $row['id']]);
-
-        $target = (string) $row['target'];
-        $target = preg_match('#^https?://#i', $target) === 1 ? $target : hi()->urls()->to($target);
-
-        header('Location: ' . $target, true, (int) $row['status'] === 302 ? 302 : 301);
-        exit;
+        $settings = self::settings();
+        $settings->save($settings->all(), null, true);
     }
 
-    /* ---------------------------------------------------------------------
-     * Panel ekranı
-     * ------------------------------------------------------------------ */
-
-    private function screen(): null
+    /**
+     * Kaldırma: ayar satırı silinir. Tablolar migration geri alımıyla düşer,
+     * içerik başına yazılan SEO alanları içerikle birlikte kalır.
+     */
+    public function uninstall(): void
     {
-        $db      = hi()->db();
-        $selfUrl = 'plugin.php?eklenti=hi-seo';
-
-        if (hi()->request()->isPost()) {
-            admin_verify($selfUrl);
-
-            $action = (string) ($_POST['islem'] ?? '');
-
-            if ($action === 'settings') {
-                $this->setOption('json_ld', isset($_POST['json_ld']));
-                $this->setOption('sitemap', isset($_POST['sitemap']));
-                $this->setOption('robots_extra', trim((string) ($_POST['robots_extra'] ?? '')));
-
-                admin_redirect($selfUrl, 'success', 'SEO ayarları kaydedildi.');
-            }
-
-            if ($action === 'add-redirect' && $db->tableExists('seo_redirects')) {
-                $source = '/' . trim((string) ($_POST['kaynak'] ?? ''), '/');
-                $target = trim((string) ($_POST['hedef'] ?? ''));
-
-                if ($source === '/' || $target === '') {
-                    admin_redirect($selfUrl, 'error', 'Kaynak ve hedef zorunludur.');
-                }
-
-                $exists = $db->builder('seo_redirects')->where('source', $source)->exists();
-
-                if ($exists) {
-                    admin_redirect($selfUrl, 'error', 'Bu kaynak yol için zaten bir yönlendirme var.');
-                }
-
-                $db->insert('seo_redirects', [
-                    'source'     => $source,
-                    'target'     => $target,
-                    'status'     => (int) ($_POST['kod'] ?? 301) === 302 ? 302 : 301,
-                    'created_at' => Dates::stamp(),
-                    'updated_at' => Dates::stamp(),
-                ]);
-
-                admin_redirect($selfUrl, 'success', 'Yönlendirme eklendi.');
-            }
-
-            if ($action === 'delete-redirect' && $db->tableExists('seo_redirects')) {
-                $db->delete('seo_redirects', ['id' => (int) ($_POST['id'] ?? 0)]);
-
-                admin_redirect($selfUrl, 'success', 'Yönlendirme silindi.');
-            }
-        }
-
-        $redirects = $db->tableExists('seo_redirects')
-            ? $db->builder('seo_redirects')->orderBy('id', 'desc')->limit(100)->get()
-            : [];
-
-        // Kısa denetim: alternatif metni olmayan görseller, özeti olmayan yazılar.
-        $missingExcerpt = hi()->content()->query([
-            'type'          => 'post',
-            'visibleOnly'   => true,
-            'perPage'       => 0,
-            'withRelations' => false,
-        ]);
-
-        $noExcerpt = 0;
-
-        foreach ($missingExcerpt['items'] as $entry) {
-            if (trim($entry->excerpt) === '') {
-                $noExcerpt++;
-            }
-        }
-
-        $noAlt = 0;
-
-        foreach (hi()->mediaRepo()->recent(200, 'image/') as $item) {
-            if (trim($item->alt) === '') {
-                $noAlt++;
-            }
-        }
-
-        admin_head([
-            'title'       => 'SEO',
-            'slug'        => 'plugin:hi-seo',
-            'description' => 'Sitemap, yapısal veri ve yönlendirme yönetimi.',
-            'breadcrumb'  => [['label' => 'Eklentiler', 'url' => 'plugins.php'], ['label' => 'HiSEO']],
-        ]);
-
-        echo ui_metrics([
-            ['label' => 'Sitemap', 'value' => $this->option('sitemap', true) ? 'açık' : 'kapalı',
-             'note' => 'sitemap.xml', 'href' => hi()->urls()->to('sitemap.xml')],
-            ['label' => 'Yapısal veri', 'value' => $this->option('json_ld', true) ? 'açık' : 'kapalı',
-             'note' => 'JSON-LD'],
-            ['label' => 'Özeti eksik yazı', 'value' => (string) $noExcerpt,
-             'note' => $noExcerpt > 0 ? 'arama sonucu metni zayıf kalır' : 'sorun yok'],
-            ['label' => 'Alt metni eksik görsel', 'value' => (string) $noAlt,
-             'note' => $noAlt > 0 ? 'erişilebilirlik ve SEO kaybı' : 'sorun yok'],
-        ]);
-        ?>
-
-        <div class="cols-main mt-3">
-            <div>
-                <section class="panel">
-                    <header class="panel-head">
-                        <div>
-                            <h2 class="panel-title">301 yönlendirmeler</h2>
-                            <p class="panel-sub">Eski adresleri yeni sayfalara taşıyın</p>
-                        </div>
-                    </header>
-
-                    <?php if ($redirects !== []) : ?>
-                        <div class="table-wrap">
-                            <table class="data">
-                                <thead>
-                                    <tr>
-                                        <th>Kaynak</th>
-                                        <th>Hedef</th>
-                                        <th>Kod</th>
-                                        <th class="num">İsabet</th>
-                                        <th class="fit"></th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($redirects as $row) : ?>
-                                        <tr>
-                                            <td class="mono small"><?= esc_html((string) $row['source']) ?></td>
-                                            <td class="mono small dim"><?= esc_html((string) $row['target']) ?></td>
-                                            <td class="small"><?= (int) $row['status'] ?></td>
-                                            <td class="num"><?= (int) $row['hits'] ?></td>
-                                            <td class="fit">
-                                                <form method="post" action="<?= esc_url($selfUrl) ?>">
-                                                    <?= hi_csrf_field() ?>
-                                                    <input type="hidden" name="islem" value="delete-redirect">
-                                                    <input type="hidden" name="id" value="<?= (int) $row['id'] ?>">
-                                                    <button class="icon-btn" type="submit" aria-label="Sil"
-                                                        <?= ui_confirm('Bu yönlendirme silinecek.') ?>>
-                                                        <?= admin_icon('trash', 15) ?>
-                                                    </button>
-                                                </form>
-                                            </td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    <?php else : ?>
-                        <?= ui_empty('link', 'Yönlendirme yok', 'Sağdaki formdan ilk yönlendirmeyi ekleyin.') ?>
-                    <?php endif; ?>
-                </section>
-            </div>
-
-            <div>
-                <section class="box">
-                    <header class="box-head"><?= admin_icon('plus', 15) ?>Yönlendirme ekle</header>
-                    <form method="post" action="<?= esc_url($selfUrl) ?>">
-                        <?= hi_csrf_field() ?>
-                        <input type="hidden" name="islem" value="add-redirect">
-
-                        <div class="box-body">
-                            <?= ui_field('Kaynak yol',
-                                '<div class="input-group"><span class="addon">/</span>'
-                                . ui_input('kaynak', '', ['id' => 'r-src', 'class' => 'input mono',
-                                    'placeholder' => 'eski-yazi']) . '</div>',
-                                'Site köküne göre eski adres.', 'r-src') ?>
-
-                            <?= ui_field('Hedef',
-                                ui_input('hedef', '', ['id' => 'r-dst', 'class' => 'input mono',
-                                    'placeholder' => 'yazi/yeni-adres']),
-                                'Göreli yol ya da tam adres.', 'r-dst') ?>
-
-                            <?= ui_field('Kod', ui_select('kod', ['301' => '301 — kalıcı', '302' => '302 — geçici'],
-                                '301', ['id' => 'r-code']), '', 'r-code') ?>
-                        </div>
-
-                        <footer class="box-foot">
-                            <span class="spacer"></span>
-                            <button class="btn btn-sm btn-primary" type="submit">Ekle</button>
-                        </footer>
-                    </form>
-                </section>
-
-                <section class="box">
-                    <header class="box-head"><?= admin_icon('settings', 15) ?>Ayarlar</header>
-                    <form method="post" action="<?= esc_url($selfUrl) ?>">
-                        <?= hi_csrf_field() ?>
-                        <input type="hidden" name="islem" value="settings">
-
-                        <div class="box-body">
-                            <?= ui_switch('sitemap', (bool) $this->option('sitemap', true),
-                                'sitemap.xml üret', 'Tüm görünür içerikleri listeler.') ?>
-
-                            <?= ui_switch('json_ld', (bool) $this->option('json_ld', true),
-                                'JSON-LD yapısal veri', 'Arama sonuçlarında zengin görünüm sağlar.') ?>
-
-                            <div class="mt-3">
-                                <?= ui_field('robots.txt eki',
-                                    '<textarea class="input mono" id="r-robots" name="robots_extra" rows="4">'
-                                    . esc_html((string) $this->option('robots_extra', '')) . '</textarea>',
-                                    'Otomatik kuralların altına eklenir.', 'r-robots') ?>
-                            </div>
-                        </div>
-
-                        <footer class="box-foot">
-                            <span class="spacer"></span>
-                            <button class="btn btn-sm btn-primary" type="submit">Kaydet</button>
-                        </footer>
-                    </form>
-                </section>
-
-                <section class="box">
-                    <header class="box-head"><?= admin_icon('info', 15) ?>Adresler</header>
-                    <div class="box-body">
-                        <ul class="kv">
-                            <li><span class="k">Sitemap</span>
-                                <span class="v"><a href="<?= esc_url(hi()->urls()->to('sitemap.xml')) ?>" target="_blank" rel="noopener">aç</a></span></li>
-                            <li><span class="k">robots.txt</span>
-                                <span class="v"><a href="<?= esc_url(hi()->urls()->to('robots.txt')) ?>" target="_blank" rel="noopener">aç</a></span></li>
-                            <li><span class="k">RSS</span>
-                                <span class="v"><a href="<?= esc_url(hi()->urls()->to('feed')) ?>" target="_blank" rel="noopener">aç</a></span></li>
-                        </ul>
-                    </div>
-                </section>
-            </div>
-        </div>
-
-        <?php
-        admin_foot();
-
-        return null;
+        // Settings::forget() ayar SATIRINI siler; Dispatcher::forget() ile ilgisi
+        // yoktur — kancalara bu eklenti hiçbir yerde elle dokunmaz.
+        self::settings()->forget();
     }
 }

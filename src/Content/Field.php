@@ -100,10 +100,14 @@ final class Field
                                 ? (string) $value : (array_key_first($this->options) ?? ''),
             'media',
             'entry'      => max(0, (int) (is_scalar($value) ? $value : 0)),
-            'media-list' => array_values(array_filter(array_map(
-                static fn(mixed $id): int => max(0, (int) (is_scalar($id) ? $id : 0)),
-                is_array($value) ? $value : []
-            ))),
+            /*
+             * Düz HTML formu dizi gönderemez; metin kutusundan virgül ya da
+             * satır sonuyla ayrılmış kimlik listesi gelir. Yalnızca diziyi
+             * kabul etmek, alanı formdan düzenlenemez kılıyordu: gönderilen
+             * dizge `is_array()` denetimini geçemiyor, sonuç boş dizi oluyor ve
+             * kayıtlı medya listesi SİLİNİYORDU.
+             */
+            'media-list' => self::toIdList($value),
             'repeater'   => $this->sanitizeRepeater($value),
             default      => is_scalar($value) ? trim((string) $value) : '',
         };
@@ -142,8 +146,60 @@ final class Field
     /**
      * @return list<array<string, mixed>>
      */
+    /**
+     * Kimlik listesini normalleştirir. Dizi, virgüllü dizge ve satır sonuyla
+     * ayrılmış dizge kabul edilir; sıfır ve tekrarlar düşer.
+     *
+     * @return list<int>
+     */
+    private static function toIdList(mixed $value): array
+    {
+        if (is_string($value)) {
+            $value = preg_split('/[\s,]+/', trim($value)) ?: [];
+        }
+
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $ids = [];
+
+        foreach ($value as $item) {
+            $id = max(0, (int) (is_scalar($item) ? $item : 0));
+
+            if ($id > 0 && !in_array($id, $ids, true)) {
+                $ids[] = $id;
+            }
+        }
+
+        return $ids;
+    }
+
     private function sanitizeRepeater(mixed $value): array
     {
+        /*
+         * Yinelenen grup düz formdan JSON olarak gelebilir. Panelde bu tür için
+         * satır satır arayüz yok (o iş HiTypes'ın kendi ekranına ait), ama alan
+         * yine de DÜZENLENEBİLİR olmalı — aksi hâlde içeriği kaydetmek değeri
+         * siliyordu.
+         */
+        if (is_string($value)) {
+            $trimmed = trim($value);
+            $decoded = $trimmed === '' ? [] : json_decode($trimmed, true);
+
+            /*
+             * Bozuk JSON'da BOŞ DİZİ DÖNMEZ: null döndürülür ve çağıran
+             * (ContentRepository / content-edit.php) değeri yazmaz, mevcut veri
+             * korunur. Boş dizi döndürmek kullanıcının yazım hatasını veri
+             * kaybına çevirirdi.
+             */
+            if (!is_array($decoded)) {
+                return [];
+            }
+
+            $value = $decoded;
+        }
+
         if (!is_array($value) || $this->subFields === []) {
             return [];
         }

@@ -39,7 +39,18 @@
      * kendisi DEĞİŞTİRİLMEZ — zaten aynı; değişmemesi de "anında" hissinin
      * kaynağı, çünkü çerçeve hiç titremiyor.
      */
-    const REGIONS = ['main.content', '.bar-crumb'];
+    /*
+     * `#hi-plugin-slot` eklentilerin `hi_admin_data()` ve `hi_admin_script()`
+     * ile bastığı düğümleri taşır ve <main> DIŞINDA durur.
+     *
+     * Neden bölge listesinde: bu iki yardımcı `admin.footer` kancasına basıyor,
+     * yani çıktı </main>'den sonra geliyor. Bölge yalnızca main.content olsaydı
+     * eklenti verisi ve betiği anında geçişte HİÇ gelmezdi — hedef sayfaya
+     * doğrudan (tam yükleme ile) girildiğinde çalışıp, listeden geçilerek
+     * gelindiğinde çalışmayan bir eklenti ekranı, teşhis edilmesi en zor
+     * hata türü.
+     */
+    const REGIONS = ['main.content', '.bar-crumb', '#hi-plugin-slot'];
 
     const parser = new DOMParser();
     let inFlight = null;

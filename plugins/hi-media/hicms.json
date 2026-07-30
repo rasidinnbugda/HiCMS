@@ -1,17 +1,19 @@
 {
     "name": "HiMedia",
     "slug": "hi-media",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "type": "plugin",
-    "description": "Yüklenen görsellerden türev boyutlar ve WebP kopyaları üretir; srcset otomatik dolar. Tamamen isteğe bağlıdır — kapatıldığında çekirdek tek dosyayı kullanmaya döner.",
+    "description": "Medya boru hattı: yükleme anında türev boyutlar ile WebP/AVIF kopyaları, var olan medya için toplu üretim, kullanılmayan dosya ve alt metin denetimi, klasör/etiket ile gruplama. GD yoksa üretim sessizce devre dışı kalır.",
     "author": "HiCMS",
     "repository": "rasidinnbugda/hi-media",
     "license": "GPL-3.0-or-later",
     "requires": {
-        "hicms": "0.2.0",
+        "hicms": "0.3.0",
         "php": "8.2"
     },
-    "tags": ["medya", "performans", "webp", "srcset"],
+    "tags": ["medya", "performans", "webp", "avif", "srcset", "denetim"],
+    "namespace": "HiMedia\\",
+    "autoload": "src",
     "class": "HiMedia\\Plugin",
     "main": "plugin.php"
 }
