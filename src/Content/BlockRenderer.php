@@ -216,12 +216,93 @@ final class BlockRenderer
         $html = '<img';
 
         foreach ($attributes as $name => $value) {
-            $html .= ' ' . $name . '="' . ($name === 'src' || $name === 'srcset'
-                ? Str::attr($value)
-                : Str::attr($value)) . '"';
+            $html .= ' ' . $name . '="' . Str::attr($value) . '"';
         }
 
-        return $html . '>';
+        $html .= '>';
+
+        /*
+         * MODERN BİÇİMLER `<picture>` İLE SUNULUR.
+         *
+         * `srcset` BİÇİM KARIŞTIRAMAZ: tarayıcı listedeki adayların hepsinin
+         * aynı biçimde olduğunu varsayar, `type` bildirimi yoktur. WebP'yi
+         * srcset'e koymak, desteklemeyen tarayıcıya bozuk görsel göstermek olur.
+         *
+         * Bu yüzden 0.2.0'da HiMedia'nın ürettiği WebP dosyası diskte duruyor
+         * ama hiçbir yerde sunulmuyordu — kazanç üretilmiş, teslim edilmemiş.
+         *
+         * `<picture>` YALNIZCA modern türev gerçekten varsa basılır; yoksa çıktı
+         * bugünküyle birebir aynı kalır. Böylece tema CSS'i ve mevcut
+         * işaretleme beklentileri bozulmuyor.
+         */
+        $modern = $this->modernSources($item);
+
+        if ($modern === []) {
+            return $html;
+        }
+
+        $picture = '<picture>';
+
+        foreach ($modern as $mime => $set) {
+            $picture .= '<source type="' . Str::attr($mime) . '" srcset="' . Str::attr($set) . '"'
+                . ' sizes="' . Str::attr($sizes) . '">';
+        }
+
+        return $picture . $html . '</picture>';
+    }
+
+    /**
+     * Modern biçim türevlerini MIME türüne göre gruplar.
+     *
+     * Biçim dosya UZANTISINDAN türetilir, `sizes` içindeki bir anahtardan değil:
+     * eklentinin ayrıca bir alan doldurmasına bağlı kalmadan çalışır.
+     *
+     * Sıra önemli — tarayıcı desteklediği İLK kaynağı seçer, o yüzden en verimli
+     * biçim başta olmalı: AVIF, sonra WebP.
+     *
+     * @return array<string, string> MIME → srcset
+     */
+    private function modernSources(MediaItem $item): array
+    {
+        if ($item->sizes === []) {
+            return [];
+        }
+
+        $byMime = [];
+
+        foreach ($item->sizes as $size) {
+            $file  = (string) ($size['file'] ?? '');
+            $width = (int) ($size['width'] ?? 0);
+
+            if ($file === '' || $width <= 0) {
+                continue;
+            }
+
+            $mime = match (strtolower((string) pathinfo($file, PATHINFO_EXTENSION))) {
+                'avif' => 'image/avif',
+                'webp' => 'image/webp',
+                default => '',
+            };
+
+            if ($mime === '') {
+                continue;
+            }
+
+            $byMime[$mime][$width] = $this->url->uploads($file) . ' ' . $width . 'w';
+        }
+
+        $ordered = [];
+
+        foreach (['image/avif', 'image/webp'] as $mime) {
+            if (!isset($byMime[$mime])) {
+                continue;
+            }
+
+            ksort($byMime[$mime]);
+            $ordered[$mime] = implode(', ', $byMime[$mime]);
+        }
+
+        return $ordered;
     }
 
     /**
@@ -240,6 +321,17 @@ final class BlockRenderer
             $width = (int) ($size['width'] ?? 0);
 
             if ($file === '' || $width <= 0) {
+                continue;
+            }
+
+            /*
+             * Modern biçim türevleri buraya GİRMEZ. Tek bir srcset içinde iki
+             * farklı biçim bulunamaz: tarayıcı adayların hepsini aynı biçim
+             * sayar ve `type` bildirimi yoktur, dolayısıyla WebP'yi burada
+             * sunmak desteklemeyen tarayıcıya bozuk görsel göstermek olur.
+             * Onlar <picture><source> ile sunuluyor (bkz. modernSources()).
+             */
+            if (in_array(strtolower((string) pathinfo($file, PATHINFO_EXTENSION)), ['webp', 'avif'], true)) {
                 continue;
             }
 

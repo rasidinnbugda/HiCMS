@@ -585,6 +585,59 @@ $owners->emit('test.kanca');
 check('b sökülünce çekirdek yine kalır', $trace === ['çekirdek'], implode(',', $trace));
 
 /* -------------------------------------------------------------------------
+ * 6ba. Modern görsel biçimleri
+ * -------------------------------------------------------------------------
+ * HiMedia'nın ürettiği WebP dosyası 0.2.0'da diskte duruyor ama hiçbir yerde
+ * sunulmuyordu: srcset BİÇİM KARIŞTIRAMAZ (tarayıcı adayların hepsini aynı
+ * biçim sayar, `type` bildirimi yoktur), dolayısıyla WebP'yi oraya koymak
+ * desteklemeyen tarayıcıya bozuk görsel göstermek olurdu. Doğru araç <picture>.
+ * ---------------------------------------------------------------------- */
+
+echo "\nModern görsel biçimleri\n";
+
+$plainImage = HiCMS\Model\MediaItem::fromRow([
+    'id' => 1, 'path' => '2026/07/foto.jpg', 'alt' => 'Deneme',
+    'width' => 1600, 'height' => 900,
+    'sizes' => json_encode([['file' => '2026/07/foto-800.jpg', 'width' => 800]]),
+]);
+
+$plainHtml = $renderer->image($plainImage);
+
+check('Modern türev yokken <picture> basılmaz', !str_contains($plainHtml, '<picture'), $plainHtml);
+check('Modern türev yokken srcset korunur', str_contains($plainHtml, 'foto-800.jpg 800w'));
+
+$modernImage = HiCMS\Model\MediaItem::fromRow([
+    'id' => 2, 'path' => '2026/07/foto.jpg', 'alt' => 'Deneme',
+    'width' => 1600, 'height' => 900,
+    'sizes' => json_encode([
+        ['file' => '2026/07/foto-800.jpg', 'width' => 800],
+        ['file' => '2026/07/foto-800.webp', 'width' => 800],
+        ['file' => '2026/07/foto-1600.webp', 'width' => 1600],
+        ['file' => '2026/07/foto-800.avif', 'width' => 800],
+    ]),
+]);
+
+$modernHtml = $renderer->image($modernImage);
+$imgPart    = substr($modernHtml, (int) strpos($modernHtml, '<img'));
+
+check('Modern türev varken <picture> basılır', str_contains($modernHtml, '<picture>'));
+check('AVIF kaynağı bildirilir', str_contains($modernHtml, 'type="image/avif"'));
+check('WebP kaynağı bildirilir', str_contains($modernHtml, 'type="image/webp"'));
+check(
+    'AVIF WebP\'den önce gelir',
+    strpos($modernHtml, 'image/avif') < strpos($modernHtml, 'image/webp')
+);
+check(
+    'img srcset\'inde biçim karışmaz',
+    !str_contains($imgPart, '.webp') && !str_contains($imgPart, '.avif'),
+    $imgPart
+);
+check(
+    'WebP genişlikleri artan sırada',
+    strpos($modernHtml, 'foto-800.webp') < strpos($modernHtml, 'foto-1600.webp')
+);
+
+/* -------------------------------------------------------------------------
  * 6bb. Vekil başlığı güveni
  * -------------------------------------------------------------------------
  * 0.2.0 X-Forwarded-For ve CF-Connecting-IP başlıklarına KOŞULSUZ güveniyordu.

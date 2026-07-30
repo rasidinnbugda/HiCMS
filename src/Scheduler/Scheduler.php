@@ -128,6 +128,26 @@ final class Scheduler
         return $this->db->builder('jobs')->orderBy('run_at')->limit($limit)->get();
     }
 
+    /**
+     * Belirtilen süreden FAZLA gecikmiş görev sayısı.
+     *
+     * `dueCount()` "şimdi çalışabilir" olanları sayar; bu ise "çalışması
+     * gerekiyordu ama çalışmadı" olanları. Aradaki fark tanılama için önemli:
+     * görevler istek sonrasında çalıştığı için hiç ziyaret edilmeyen bir sitede
+     * hiç çalışmazlar ve bu sessizce olur — zamanlanmış yazılar yayınlanmaz,
+     * budama işlemez. Panelde uyarı olarak gösterilebilmesi için ölçülüyor.
+     */
+    public function overdue(int $seconds = 3600): int
+    {
+        if (!$this->ready()) {
+            return 0;
+        }
+
+        return $this->db->builder('jobs')
+            ->whereRaw('run_at < :limit', ['limit' => Dates::stamp('-' . max(1, $seconds) . ' seconds')])
+            ->count();
+    }
+
     public function dueCount(): int
     {
         if (!$this->ready()) {

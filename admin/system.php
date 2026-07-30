@@ -405,13 +405,77 @@ if ($tab === 'guncelleme') :
 <?php elseif ($tab === 'durum') :
     $checks  = Requirements::check($app->rootDir());
     $summary = Requirements::summary($checks);
+
+    /*
+     * Requirements sunucunun HiCMS'i çalıştırabilecek durumda olup olmadığına
+     * bakar. Diagnostics farklı bir soruyu sorar: sunucu uygun ama kurulum
+     * yanlış yapılandırılmış olabilir mi? Buradaki maddelerin hiçbiri PHP
+     * hatası vermez, hepsi sessizce yanlış çalışır.
+     */
+    $issues      = HiCMS\Support\Diagnostics::run($app);
+    $issueTotals = HiCMS\Support\Diagnostics::summary($issues);
     ?>
     <?= ui_metrics([
         ['label' => 'Uygun', 'value' => (string) $summary['ok']],
         ['label' => 'Uyarı', 'value' => (string) $summary['warn']],
         ['label' => 'Eksik', 'value' => (string) $summary['fail']],
+        ['label' => 'Yapılandırma', 'value' => (string) ($issueTotals['error'] + $issueTotals['warn']),
+         'note' => $issueTotals['error'] > 0 ? $issueTotals['error'] . ' ciddi' : 'sorun yok'],
         ['label' => 'PHP', 'value' => PHP_VERSION],
     ]) ?>
+
+    <?php
+    /*
+     * Bölüm HER ZAMAN basılır, sorun olmasa bile.
+     *
+     * Yalnızca sorunları gösteren bir tanılama ekranı, sorun yokken denetimin
+     * hiç yapılıp yapılmadığını belirsiz bırakıyor — kullanıcı "bakıyor mu,
+     * bakmıyor mu?" diye düşünüyor. Uygun bulunan maddeler de listelenir ama
+     * sessiz biçimde; dikkat sorunlarda kalsın diye önce onlar geliyor.
+     */
+    usort($issues, static function (array $a, array $b): int {
+        $rank = ['error' => 0, 'warn' => 1, 'ok' => 2];
+
+        return ($rank[$a['level']] ?? 3) <=> ($rank[$b['level']] ?? 3);
+    });
+    ?>
+    <section class="panel mt-3">
+        <header class="panel-head">
+            <div>
+                <h2 class="panel-title">Yapılandırma denetimi</h2>
+                <p class="panel-sub">
+                    <?php if ($issueTotals['error'] + $issueTotals['warn'] === 0) : ?>
+                        <?= count($issues) ?> madde denetlendi, hepsi uygun.
+                    <?php else : ?>
+                        Sunucu uygun ama aşağıdaki ayarlar sessizce yanlış çalışıyor.
+                    <?php endif; ?>
+                </p>
+            </div>
+        </header>
+        <div class="panel-body">
+            <ul class="checks">
+                <?php foreach ($issues as $issue) : ?>
+                    <?php
+                    [$mark, $icon] = match ($issue['level']) {
+                        'error' => ['is-err', 'alert'],
+                        'warn'  => ['is-warn', 'alert'],
+                        default => ['is-ok', 'check'],
+                    };
+                    ?>
+                    <li>
+                        <span class="mark <?= $mark ?>"><?= admin_icon($icon, 11) ?></span>
+                        <span class="body">
+                            <?= esc_html($issue['label']) ?>
+                            <small><?= esc_html($issue['detail']) ?></small>
+                            <?php if ($issue['level'] !== 'ok' && $issue['fix'] !== '') : ?>
+                                <small class="mono"><?= esc_html($issue['fix']) ?></small>
+                            <?php endif; ?>
+                        </span>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        </div>
+    </section>
 
     <div class="cols-main mt-3">
         <section class="panel">

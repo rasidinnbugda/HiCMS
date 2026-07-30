@@ -324,6 +324,30 @@ foreach ([
     page($label, $path, 200, $needles);
 }
 
+/*
+ * TANILAMA EKRANI
+ *
+ * Requirements sunucunun uygun olup olmadığına bakar; Diagnostics ise "sunucu
+ * uygun ama kurulum yanlış yapılandırılmış olabilir mi" sorusunu sorar.
+ * Buradaki maddelerin hiçbiri PHP hatası vermez, hepsi sessizce yanlış çalışır:
+ * canlıda açık kalmış hata ayıklama, örnek anahtarla kalmış kurulum, ters vekil
+ * arkasında yanlış görünen IP'ler, web'den okunabilen yedek klasörü.
+ */
+$status = request($base . '/admin/system.php?sekme=durum', [], true)['body'];
+
+check('tanılama metriği basıldı', str_contains($status, 'Yapılandırma'), 'metrik yok');
+
+check(
+    'tanılama imza anahtarını denetliyor',
+    str_contains($status, 'İmza anahtar'),
+    'anahtar maddesi yok'
+);
+
+check(
+    'tanılama PHP hatası vermiyor',
+    !preg_match('~(Fatal error|Warning:\s|Uncaught \w)~', $status)
+);
+
 /* ------------------------------------------------------- 4. yazma işlemleri */
 
 echo "\nYazma işlemleri\n";
