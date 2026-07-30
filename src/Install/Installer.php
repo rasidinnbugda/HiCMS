@@ -300,6 +300,10 @@ final class Installer
             'upload_max_bytes'    => 16777216,
             'allow_svg'           => false,
             'log_retention_days'  => 180,
+            // Kayıt başına tutulan sürüm sayısı ve çöp kutusu bekleme süresi.
+            // Budama core.prune_logs görevinde yapılıyor.
+            'revision_keep'       => 20,
+            'trash_days'          => 30,
             'footer_note'         => 'HiCMS ile üretildi.',
             'social'              => ['x' => '', 'instagram' => '', 'linkedin' => '', 'github' => '', 'youtube' => ''],
         ]);

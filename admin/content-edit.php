@@ -157,11 +157,64 @@ if ($app->request()->isPost()) {
         $meta[$field->key] = $field->sanitize($_POST['alan'][$field->key] ?? null);
     }
 
-    $result = $app->content()->save($entry, $meta, $termSelection);
+    /*
+     * ÇAKIŞMA DENETİMİ
+     *
+     * Formda gizli `beklenen_surum` alanı var ve mevcut bir içerik için bu alanın
+     * BULUNMAMASI hata sayılır — geçilmez.
+     *
+     * 0.2.0 tasarımında denetim `(int) ($_POST['beklenen_surum'] ?? 0)` ile
+     * yapılacaktı ve sıfır "denetim yapma" anlamına geliyordu: alanı hiç
+     * göndermeyen bir istek — önbellekten açılmış eski bir sayfa, eksik
+     * gönderilen bir form, elle kurulmuş bir istek — kilidi tamamen atlıyordu.
+     * Yani kilit tam olarak korunması gereken durumda açıktı (fail-open).
+     */
+    $expected = null;
+
+    if (!$isNew) {
+        if (!array_key_exists('beklenen_surum', $_POST) || !ctype_digit((string) $_POST['beklenen_surum'])) {
+            admin_flash(
+                'error',
+                'Form eksik gönderildi (sürüm bilgisi yok); değişiklik kaydedilmedi. '
+                . 'Sayfayı yenileyip yeniden deneyin.'
+            );
+
+            admin_redirect($type->editUrl($entry->id), 'error', 'Kayıt güvenli biçimde durduruldu.');
+        }
+
+        $expected = (int) $_POST['beklenen_surum'];
+    }
+
+    $result = $app->content()->save($entry, $meta, $termSelection, $expected);
 
     if (!$result['ok']) {
+        /*
+         * Çakışmada kullanıcının yazdığı KAYBOLMAZ: reddedilen yük kendi
+         * otomatik kayıt slotuna yazılır ve sürüm geçmişinden geri alınabilir.
+         * Slot kullanıcı başına olduğu için diğer kullanıcının kaydını ezmez.
+         */
+        if (!empty($result['conflict'])) {
+            $app->content()->snapshot($entry, $app->auth()->id(), 'autosave');
+
+            admin_flash(
+                'error',
+                'Bu içerik siz düzenlerken başkası tarafından kaydedildi. Yazdıklarınız '
+                . 'kaybolmadı: sürüm geçmişinde "otomatik" kaydı olarak duruyor. '
+                . 'Sayfayı yenileyip karşılaştırın.'
+            );
+
+            admin_redirect($type->editUrl($entry->id), 'error', '');
+        }
+
         admin_flash('error', $result['error']);
     } else {
+        // Kaydedilen her hâl sürüm olarak saklanır; geri dönüş mümkün olsun.
+        $saved = $app->content()->find($result['id'], false);
+
+        if ($saved !== null) {
+            $app->content()->snapshot($saved, $app->auth()->id(), 'save');
+        }
+
         $app->audit()->record(
             action: $isNew ? 'content.create' : 'content.update',
             userId: $app->auth()->id(),
@@ -250,6 +303,19 @@ admin_head($page);
 
 <form id="entry-form" method="post" action="<?= esc_url($isNew ? $type->editUrl() : $type->editUrl($entry->id)) ?>" data-guard>
     <?= hi_csrf_field() ?>
+
+    <?php if (!$isNew) : ?>
+        <?php
+        /*
+         * İyimser kilit tabanı. Formu açtığınız andaki sürüm sayacı; kaydetmede
+         * sunucu bununla eşleşmezse araya başka bir yazma girmiş demektir ve
+         * kayıt reddedilir. Alanın yokluğu da hata sayılır (bkz. yukarısı) —
+         * yoksa eksik gönderilen bir istek kilidi atlar.
+         */
+        ?>
+        <input type="hidden" name="beklenen_surum"
+               value="<?= (int) $app->content()->revisionOf($entry->id) ?>">
+    <?php endif; ?>
 
     <div class="cols-editor">
         <div>

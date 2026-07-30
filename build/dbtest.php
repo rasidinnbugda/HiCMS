@@ -400,15 +400,23 @@ if ($created !== false) {
 }
 
 if ($newId > 0) {
+    /*
+     * `beklenen_surum` artık ZORUNLU: alanın yokluğu iyimser kilidi atlamak
+     * anlamına geleceği için sunucu isteği reddediyor. Test de gerçek panelin
+     * gönderdiği alanı göndermek zorunda.
+     */
+    $revNow = (int) $db->query('SELECT revision_no FROM hi_content WHERE id = ' . $newId)->fetchColumn();
+
     request($base . '/admin/content-edit.php?id=' . $newId, [
-        '_token'  => token($base . '/admin/content-edit.php?id=' . $newId),
-        'baslik'  => 'Doğrulama yazısı — güncellendi',
-        'kisa_ad' => 'dogrulama-yazisi',
-        'ozet'    => 'Güncellendi.',
-        'bloklar' => $tree,
-        'durum'   => 'draft',
-        'yazar'   => '1',
-        'tarih'   => date('Y-m-d\TH:i'),
+        '_token'         => token($base . '/admin/content-edit.php?id=' . $newId),
+        'beklenen_surum' => (string) $revNow,
+        'baslik'         => 'Doğrulama yazısı — güncellendi',
+        'kisa_ad'        => 'dogrulama-yazisi',
+        'ozet'           => 'Güncellendi.',
+        'bloklar'        => $tree,
+        'durum'          => 'draft',
+        'yazar'          => '1',
+        'tarih'          => date('Y-m-d\TH:i'),
     ]);
 
     $edited = $db->query('SELECT title, status FROM hi_content WHERE id = ' . $newId)->fetch(PDO::FETCH_ASSOC);
@@ -467,6 +475,138 @@ $afterPlugin   = array_map('strval', $db->query('SHOW TABLES')->fetchAll(PDO::FE
 
 check('eklenti etkinleştirildi', str_contains($activePlugins, 'hi-seo'), $activePlugins);
 check('eklenti migration\'ı çalıştı', in_array('hi_seo_redirects', $afterPlugin, true));
+
+/* ------------------------------------------------- 4a. yazma deneyimi */
+
+echo "\nYazma deneyimi\n";
+
+$expected = [
+    'migrations', 'options', 'users', 'user_tokens', 'login_attempts',
+    'content', 'content_meta', 'terms', 'term_entry',
+    'media', 'comments', 'audit_log', 'jobs', 'revisions',
+];
+
+$tablesNow = array_map('strval', $db->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN));
+
+check('sürüm tablosu kuruldu', in_array('hi_revisions', $tablesNow, true));
+
+$cols = array_map(
+    static fn(array $r): string => (string) $r['Field'],
+    $db->query('SHOW COLUMNS FROM hi_content')->fetchAll(PDO::FETCH_ASSOC)
+);
+
+check('revision_no sütunu eklendi', in_array('revision_no', $cols, true));
+check('trashed_at sütunu eklendi', in_array('trashed_at', $cols, true));
+
+if ($newId > 0) {
+    // Kaydetme sürüm üretmeli.
+    $revCount = (int) $db->query('SELECT COUNT(*) FROM hi_revisions WHERE entry_id = ' . $newId)->fetchColumn();
+
+    check('kaydetme sürüm üretti', $revCount >= 1, $revCount . ' sürüm');
+
+    $rev = $db->query('SELECT kind, title, blocks FROM hi_revisions WHERE entry_id = ' . $newId
+        . ' ORDER BY id DESC LIMIT 1')->fetch(PDO::FETCH_ASSOC);
+
+    check('sürüm türü save', ($rev['kind'] ?? '') === 'save', (string) ($rev['kind'] ?? ''));
+    check(
+        'sürüm blok ağacını taşıyor',
+        is_array(json_decode((string) ($rev['blocks'] ?? ''), true)),
+        substr((string) ($rev['blocks'] ?? ''), 0, 40)
+    );
+
+    /* ------------------------------------------------- iyimser kilit */
+
+    $current = (int) $db->query('SELECT revision_no FROM hi_content WHERE id = ' . $newId)->fetchColumn();
+
+    check('sürüm sayacı artıyor', $current >= 1, (string) $current);
+
+    // ESKİ sayaçla kaydetmek REDDEDİLMELİ.
+    $stale = request($base . '/admin/content-edit.php?id=' . $newId, [
+        '_token'         => token($base . '/admin/content-edit.php?id=' . $newId),
+        'beklenen_surum' => (string) max(0, $current - 1),
+        'baslik'         => 'ESKİ TABANLA YAZILDI',
+        'kisa_ad'        => 'dogrulama-yazisi',
+        'bloklar'        => '[]',
+        'durum'          => 'draft',
+        'yazar'          => '1',
+        'tarih'          => date('Y-m-d\TH:i'),
+    ]);
+
+    $titleAfter = (string) $db->query('SELECT title FROM hi_content WHERE id = ' . $newId)->fetchColumn();
+
+    check(
+        'eski sayaçla kayıt reddedildi',
+        !str_contains($titleAfter, 'ESKİ TABANLA'),
+        $titleAfter
+    );
+
+    check(
+        'çakışmada yazılan kaybolmadı (otomatik kayıt slotu)',
+        (int) $db->query('SELECT COUNT(*) FROM hi_revisions WHERE entry_id = ' . $newId
+            . " AND kind = 'autosave'")->fetchColumn() >= 1
+    );
+
+    // Sürüm alanı HİÇ gönderilmezse de reddedilmeli (fail-open olmamalı).
+    $missing = request($base . '/admin/content-edit.php?id=' . $newId, [
+        '_token'  => token($base . '/admin/content-edit.php?id=' . $newId),
+        'baslik'  => 'ALAN YOKKEN YAZILDI',
+        'kisa_ad' => 'dogrulama-yazisi',
+        'bloklar' => '[]',
+        'durum'   => 'draft',
+        'yazar'   => '1',
+        'tarih'   => date('Y-m-d\TH:i'),
+    ]);
+
+    check(
+        'sürüm alanı yokken kayıt reddedildi',
+        !str_contains(
+            (string) $db->query('SELECT title FROM hi_content WHERE id = ' . $newId)->fetchColumn(),
+            'ALAN YOKKEN'
+        )
+    );
+
+    // DOĞRU sayaçla kaydetmek geçmeli.
+    $fresh = (int) $db->query('SELECT revision_no FROM hi_content WHERE id = ' . $newId)->fetchColumn();
+
+    request($base . '/admin/content-edit.php?id=' . $newId, [
+        '_token'         => token($base . '/admin/content-edit.php?id=' . $newId),
+        'beklenen_surum' => (string) $fresh,
+        'baslik'         => 'DOĞRU TABANLA YAZILDI',
+        'kisa_ad'        => 'dogrulama-yazisi',
+        'bloklar'        => '[]',
+        'durum'          => 'draft',
+        'yazar'          => '1',
+        'tarih'          => date('Y-m-d\TH:i'),
+    ]);
+
+    check(
+        'doğru sayaçla kayıt geçti',
+        str_contains(
+            (string) $db->query('SELECT title FROM hi_content WHERE id = ' . $newId)->fetchColumn(),
+            'DOĞRU TABANLA'
+        )
+    );
+}
+
+/*
+ * Toplu durum değişikliği de sayacı artırmalı: bu yol save()'i çağırmıyor,
+ * artırmazsa kilit o yazmayı hiç görmez.
+ */
+$bulkTarget = (int) $db->query("SELECT id FROM hi_content WHERE type = 'post' ORDER BY id LIMIT 1")->fetchColumn();
+
+if ($bulkTarget > 0) {
+    $before = (int) $db->query('SELECT revision_no FROM hi_content WHERE id = ' . $bulkTarget)->fetchColumn();
+
+    request($base . '/admin/content.php?tur=post', [
+        '_token' => token($base . '/admin/content.php?tur=post'),
+        'islem'  => 'draft',
+        'ids'    => [(string) $bulkTarget],
+    ]);
+
+    $after = (int) $db->query('SELECT revision_no FROM hi_content WHERE id = ' . $bulkTarget)->fetchColumn();
+
+    check('toplu işlem sayacı artırdı', $after > $before, $before . ' → ' . $after);
+}
 
 /* --------------------------------------------- 4b. güvenlik regresyonları */
 

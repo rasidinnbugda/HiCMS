@@ -368,10 +368,17 @@ final class ContentRepository
      *
      * @param array<string, mixed> $meta           Özel alan değerleri
      * @param array<string, list<int>>|null $terms taksonomi → terim kimlikleri
-     * @return array{ok: bool, id: int, error: string}
+     * @param int|null $expectedRevision           İyimser kilit tabanı. Verilirse
+     *        içeriğin sayacı bununla eşleşmezse kayıt REDDEDİLİR ve dönüşte
+     *        `conflict => true` olur. null verilirse denetim yapılmaz.
+     * @return array{ok: bool, id: int, error: string, conflict?: bool, revision?: int}
      */
-    public function save(Entry $entry, array $meta = [], ?array $terms = null): array
-    {
+    public function save(
+        Entry $entry,
+        array $meta = [],
+        ?array $terms = null,
+        ?int $expectedRevision = null,
+    ): array {
         $isNew = $entry->id === 0;
 
         $entry->title = trim($entry->title);
@@ -425,10 +432,76 @@ final class ContentRepository
         $row['updated_at'] = Dates::stamp();
 
         if ($isNew) {
-            $row['created_at'] = Dates::stamp();
-            $entry->id         = $this->db->insert('content', $row);
+            $row['created_at']  = Dates::stamp();
+            $row['revision_no'] = 1;
+            $entry->id          = $this->db->insert('content', $row);
         } else {
-            $this->db->update('content', $row, ['id' => $entry->id]);
+            /*
+             * İYİMSER KİLİT
+             *
+             * Sayaç VERİTABANI düzeyinde artırılır ve güncelleme yalnızca
+             * beklenen sayaçla eşleşirse geçer. Araya başka bir yazma girdiyse
+             * etkilenen satır sayısı 0 olur ve çakışma bildirilir.
+             *
+             * Sayacın SQL içinde artması şart: 0.2.0'da bulkStatus() tek
+             * UPDATE ile yazıp save()'i hiç çağırmıyordu, yani PHP tarafında
+             * artırılan bir sayaç o yolu göremez ve kilit sessizce kör kalırdı.
+             *
+             * $expectedRevision null ise denetim yapılmaz — API ve göç gibi
+             * çağrılar için. Panelden gelen istekte bu değerin BULUNMAMASI
+             * hata sayılır; kararı çağıran veriyor, depo varsayım yapmıyor.
+             */
+            if ($expectedRevision !== null) {
+                $affected = $this->db->statement(
+                    sprintf(
+                        'UPDATE `%s` SET %s, `revision_no` = `revision_no` + 1'
+                        . ' WHERE `id` = :lock_id AND `revision_no` = :lock_rev',
+                        $this->db->t('content'),
+                        implode(', ', array_map(
+                            static fn(string $column): string => sprintf('`%s` = :set_%s', $column, $column),
+                            array_keys($row)
+                        ))
+                    ),
+                    array_merge(
+                        array_combine(
+                            array_map(static fn(string $c): string => 'set_' . $c, array_keys($row)),
+                            array_values($row)
+                        ),
+                        ['lock_id' => $entry->id, 'lock_rev' => $expectedRevision]
+                    )
+                );
+
+                if ($affected === 0) {
+                    $current = (int) ($this->db->builder('content')
+                        ->where('id', $entry->id)->value('revision_no') ?? 0);
+
+                    return [
+                        'ok'       => false,
+                        'id'       => $entry->id,
+                        'error'    => 'Bu içerik siz düzenlerken başkası tarafından kaydedildi.',
+                        'conflict' => true,
+                        'revision' => $current,
+                    ];
+                }
+            } else {
+                $this->db->statement(
+                    sprintf(
+                        'UPDATE `%s` SET %s, `revision_no` = `revision_no` + 1 WHERE `id` = :lock_id',
+                        $this->db->t('content'),
+                        implode(', ', array_map(
+                            static fn(string $column): string => sprintf('`%s` = :set_%s', $column, $column),
+                            array_keys($row)
+                        ))
+                    ),
+                    array_merge(
+                        array_combine(
+                            array_map(static fn(string $c): string => 'set_' . $c, array_keys($row)),
+                            array_values($row)
+                        ),
+                        ['lock_id' => $entry->id]
+                    )
+                );
+            }
         }
 
         if ($meta !== []) {
@@ -448,6 +521,232 @@ final class ContentRepository
         return ['ok' => true, 'id' => $entry->id, 'error' => ''];
     }
 
+    /* ---------------------------------------------------------------------
+     * Sürüm geçmişi ve otomatik kayıt
+     * ------------------------------------------------------------------ */
+
+    /**
+     * İçeriğin o anki hâlini sürüm olarak saklar.
+     *
+     * `kind` 'save' ya da 'restore' olduğunda yeni bir satır eklenir.
+     * 'autosave' olduğunda KULLANICI BAŞINA tek slot kullanılır: aynı
+     * kullanıcının önceki otomatik kaydı silinip yenisi yazılır.
+     *
+     * Slotun kullanıcı başına olması kritik. Tek slot olsaydı iki kişi aynı
+     * içeriği açtığında birinin otomatik kaydı diğerinin üzerine yazardı — yani
+     * tam olarak çakışmanın gerçekleştiği senaryoda veri kaybı. Oysa otomatik
+     * kaydın varlık nedeni o senaryoda veriyi kurtarmak.
+     */
+    public function snapshot(Entry $entry, int $userId, string $kind = 'save'): int
+    {
+        $kind = in_array($kind, ['save', 'autosave', 'restore'], true) ? $kind : 'save';
+
+        if ($kind === 'autosave') {
+            $this->db->builder('revisions')
+                ->where('entry_id', $entry->id)
+                ->where('user_id', $userId)
+                ->where('kind', 'autosave')
+                ->delete();
+        }
+
+        return $this->db->insert('revisions', [
+            'entry_id'    => $entry->id,
+            'user_id'     => $userId,
+            'kind'        => $kind,
+            'title'       => $entry->title,
+            'excerpt'     => $entry->excerpt,
+            'blocks'      => json_encode($entry->blocks, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'status'      => $entry->status,
+            'revision_no' => $this->revisionOf($entry->id),
+            'created_at'  => Dates::stamp(),
+        ]);
+    }
+
+    /** İçeriğin o anki kilit sayacı. */
+    public function revisionOf(int $entryId): int
+    {
+        return (int) ($this->db->builder('content')->where('id', $entryId)->value('revision_no') ?? 0);
+    }
+
+    /**
+     * Sürüm listesi — en yeni önce. Blok gövdesi TAŞINMAZ; liste ekranında
+     * gereksiz megabaytlar okunmasın.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function revisions(int $entryId, int $limit = 30): array
+    {
+        return $this->db->select(
+            sprintf(
+                'SELECT r.id, r.kind, r.title, r.status, r.revision_no, r.created_at,
+                        r.user_id, u.display_name AS user_name
+                 FROM `%s` r
+                 LEFT JOIN `%s` u ON u.id = r.user_id
+                 WHERE r.entry_id = :entry
+                 ORDER BY r.id DESC
+                 LIMIT %d',
+                $this->db->t('revisions'),
+                $this->db->t('users'),
+                max(1, min(200, $limit))
+            ),
+            ['entry' => $entryId]
+        );
+    }
+
+    /** @return array<string, mixed>|null */
+    public function revision(int $id): ?array
+    {
+        return $this->db->builder('revisions')->where('id', $id)->first();
+    }
+
+    /**
+     * Bir sürümü içeriğe geri yükler.
+     *
+     * Geri yükleme ÜZERİNE YAZMADAN ÖNCE mevcut hâli de sürüm olarak saklar;
+     * yanlış sürümü geri yükleyen kullanıcı geri dönebilsin.
+     *
+     * @return array{ok: bool, error: string}
+     */
+    public function restoreRevision(int $revisionId, int $userId): array
+    {
+        $revision = $this->revision($revisionId);
+
+        if ($revision === null) {
+            return ['ok' => false, 'error' => 'Sürüm bulunamadı.'];
+        }
+
+        $entry = $this->find((int) $revision['entry_id'], false);
+
+        if ($entry === null) {
+            return ['ok' => false, 'error' => 'Sürümün ait olduğu içerik yok.'];
+        }
+
+        // Geri yüklemeden önceki hâl kaybolmasın.
+        $this->snapshot($entry, $userId, 'restore');
+
+        $blocks = json_decode((string) $revision['blocks'], true);
+
+        $entry->title   = (string) $revision['title'];
+        $entry->excerpt = (string) ($revision['excerpt'] ?? '');
+        $entry->blocks  = is_array($blocks) ? $blocks : $entry->blocks;
+
+        $result = $this->save($entry);
+
+        return ['ok' => (bool) $result['ok'], 'error' => (string) $result['error']];
+    }
+
+    /**
+     * Kayıt başına tutulan sürüm sayısını sınırlar.
+     *
+     * Otomatik kayıt slotları sayılmaz — onlar zaten kullanıcı başına tek.
+     */
+    public function pruneRevisions(int $keep = 20): int
+    {
+        $keep = max(1, $keep);
+
+        $entries = $this->db->select(
+            sprintf(
+                'SELECT entry_id, COUNT(*) AS total FROM `%s`
+                 WHERE kind <> \'autosave\'
+                 GROUP BY entry_id HAVING total > %d',
+                $this->db->t('revisions'),
+                $keep
+            )
+        );
+
+        $removed = 0;
+
+        foreach ($entries as $row) {
+            $keepIds = array_map(
+                'intval',
+                $this->db->builder('revisions')
+                    ->where('entry_id', (int) $row['entry_id'])
+                    ->where('kind', 'save')
+                    ->orderBy('id', 'desc')
+                    ->limit($keep)
+                    ->pluck('id')
+            );
+
+            if ($keepIds === []) {
+                continue;
+            }
+
+            $removed += $this->db->statement(
+                sprintf(
+                    'DELETE FROM `%s` WHERE entry_id = :entry AND kind <> \'autosave\'
+                     AND id NOT IN (%s)',
+                    $this->db->t('revisions'),
+                    implode(',', $keepIds)
+                ),
+                ['entry' => (int) $row['entry_id']]
+            );
+        }
+
+        return $removed;
+    }
+
+    /* ---------------------------------------------------------------------
+     * Çöp kutusu
+     * ------------------------------------------------------------------ */
+
+    /**
+     * İçeriği çöp kutusuna taşır. Geri getirilebilir.
+     *
+     * 0.2.0'da silme tek adımlıydı ve geri dönüşü yoktu; yanlışlıkla silinen
+     * bir yazı yalnızca veritabanı yedeğinden kurtarılabiliyordu.
+     */
+    public function trash(int $id): bool
+    {
+        $affected = $this->db->builder('content')
+            ->where('id', $id)
+            ->update([
+                'status'     => 'trash',
+                'trashed_at' => Dates::stamp(),
+                'updated_at' => Dates::stamp(),
+            ]);
+
+        return $affected > 0;
+    }
+
+    /**
+     * Çöp kutusundan geri getirir.
+     *
+     * Durum 'draft' olur, 'published' DEĞİL: bir içeriği kazara yeniden
+     * yayına almak, kazara silmekten daha kötü sonuç doğurabilir.
+     */
+    public function untrash(int $id): bool
+    {
+        $affected = $this->db->builder('content')
+            ->where('id', $id)
+            ->update([
+                'status'     => 'draft',
+                'trashed_at' => null,
+                'updated_at' => Dates::stamp(),
+            ]);
+
+        return $affected > 0;
+    }
+
+    /** Çöp kutusunda belirtilen günden eski kayıtları kalıcı siler. */
+    public function purgeTrash(int $days = 30): int
+    {
+        $limit = Dates::stamp('-' . max(1, $days) . ' days');
+
+        $ids = array_map(
+            'intval',
+            $this->db->builder('content')
+                ->where('status', 'trash')
+                ->whereRaw('trashed_at IS NOT NULL AND trashed_at < :limit', ['limit' => $limit])
+                ->pluck('id')
+        );
+
+        foreach ($ids as $id) {
+            $this->delete($id);
+        }
+
+        return count($ids);
+    }
+
     public function delete(int $id): bool
     {
         $entry = $this->find($id, false);
@@ -460,6 +759,9 @@ final class ContentRepository
             $this->db->delete('content_meta', ['entry_id' => $id]);
             $this->db->delete('term_entry', ['entry_id' => $id]);
             $this->db->delete('comments', ['entry_id' => $id]);
+            // Sürümler de gitmeli; yoksa silinen içeriğin geçmişi yetim kalır
+            // ve tablo hiç küçülmez.
+            $this->db->delete('revisions', ['entry_id' => $id]);
             $this->db->delete('content', ['id' => $id]);
 
             // Alt sayfaları köke taşı.
@@ -482,9 +784,24 @@ final class ContentRepository
             return 0;
         }
 
-        $data = ['status' => $status, 'updated_at' => Dates::stamp()];
-
-        $changed = $this->db->builder('content')->whereIn('id', $ids)->update($data);
+        /*
+         * Sayaç BURADA da artırılmalı.
+         *
+         * Bu yol save()'i hiç çağırmıyor; tek UPDATE ile yazıyor. Sayaç
+         * artırılmazsa toplu bir durum değişikliği içeriği değiştirdiği hâlde
+         * iyimser kilit bunu görmez: kullanıcı eski tabana göre kaydeder ve
+         * toplu işlemin sonucunu sessizce ezer.
+         */
+        $changed = $this->db->statement(
+            sprintf(
+                'UPDATE `%s` SET `status` = :status, `updated_at` = :stamp,
+                        `revision_no` = `revision_no` + 1
+                 WHERE `id` IN (%s)',
+                $this->db->t('content'),
+                implode(',', $ids)
+            ),
+            ['status' => $status, 'stamp' => Dates::stamp()]
+        );
 
         if ($status === 'published') {
             // Yayın tarihi olmayanları şimdi damgala.

@@ -56,7 +56,7 @@ use RuntimeException;
  */
 final class Kernel
 {
-    public const VERSION = '0.2.0';
+    public const VERSION = '0.3.0';
 
     private static ?self $instance = null;
 
@@ -190,6 +190,18 @@ final class Kernel
         $scheduler->handle('core.prune_logs', function (): void {
             $this->audit()->prune((int) $this->options()->get('log_retention_days', 180));
             $this->auth()->pruneAttempts();
+
+            /*
+             * Sürüm ve çöp kutusu budaması AYRI BİR GÖREV DEĞİL, buraya eklendi.
+             *
+             * Yeni bir `jobs` satırı yazmak migration'ın veritabanına dokunmasını
+             * gerektirir; o da `build/smoke.php`'nin veritabanısız kuru
+             * çalıştırmasını kırıyor (ham insert bağlanmayı dener). Mevcut görev
+             * her kurulumda zaten var, dolayısıyla eski kurulumlar da budamayı
+             * güncelleme sonrası kendiliğinden kazanıyor.
+             */
+            $this->content()->pruneRevisions((int) $this->options()->get('revision_keep', 20));
+            $this->content()->purgeTrash((int) $this->options()->get('trash_days', 30));
         });
 
         $scheduler->handle('core.check_updates', function (): void {
