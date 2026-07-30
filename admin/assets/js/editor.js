@@ -14,16 +14,49 @@
      }
    ========================================================================= */
 
+/*
+ * KURULUM SÖZLEŞMESİ
+ *
+ * Editör bir kez değil, HER BÖLGE DEĞİŞİMİNDE kurulur. Anında sayfa geçişi
+ * (nav.js) <main> içeriğini değiştiriyor; editör tek seferlik kurulsaydı
+ * listeden editöre geçtiğinizde ölü bir form kalırdı.
+ *
+ * Veri de betikten değil `<script type="application/json">` öğesinden okunur:
+ * bölge değişiminde gelen <script> etiketleri çalıştırılmaz, ama veri öğesi
+ * DOM'a girdiği için okunabilir.
+ */
 (function () {
     'use strict';
 
-    const cfg = window.HI_EDITOR;
-    if (!cfg) return;
+    function boot() {
+        const root = document.getElementById('block-editor');
+        const store = document.getElementById('blocks-json');
 
-    const root = document.getElementById('block-editor');
-    const store = document.getElementById('blocks-json');
-    if (!root || !store) return;
+        if (!root || !store) return;
 
+        // Aynı DOM'a ikinci kez kurulmasın.
+        if (window.HiAdmin && !window.HiAdmin.once(root, 'block-editor')) return;
+
+        const holder = document.getElementById('hi-editor-data');
+        let cfg = null;
+
+        if (holder) {
+            try {
+                cfg = JSON.parse(holder.textContent || '{}');
+            } catch (error) {
+                if (window.console) console.error('Editör verisi okunamadı', error);
+            }
+        }
+
+        if (!cfg) return;
+
+        // Sayfadaki diğer betikler (öne çıkan görsel seçici) buradan okuyor.
+        window.HI_EDITOR = cfg;
+
+        setup(root, store, cfg);
+    }
+
+    function setup(root, store, cfg) {
     const types = cfg.types || {};
     const media = cfg.media || {};
     const icons = cfg.icons || {};
@@ -603,4 +636,20 @@
     sync();
 
     if (window.HiAdmin) window.HiAdmin.initSortable();
+    }
+
+    /*
+     * Bölge değişiminde yeniden kurulur. HiAdmin.onMount kancayı hemen bir kez
+     * de çağırdığı için ilk yükleme ayrıca ele alınmıyor.
+     *
+     * HiAdmin yoksa (admin.js yüklenmemişse) editör yine kurulur — tek başına
+     * çalışabilmesi gerekiyor.
+     */
+    if (window.HiAdmin && window.HiAdmin.onMount) {
+        window.HiAdmin.onMount(boot);
+    } else if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+    } else {
+        boot();
+    }
 })();

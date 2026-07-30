@@ -583,25 +583,35 @@ admin_head($page);
     </div>
 </div>
 
-<script>
-    <?php
-    /*
-     * İzin listesi SUNUCUDAN gelir.
-     *
-     * richtext.js kendi satır içi etiket tablosunu taşıyordu; sunucudaki
-     * allowlist (src/Support/Html.php) değiştiğinde istemci sessizce ayrışır ve
-     * kullanıcı uyguladığı biçimin kaydedildikten sonra kaybolduğunu görür.
-     * Tek kaynak sunucu; istemci onu türetiyor.
-     */
-    ?>
-    window.HI_EDITOR = {
-        types:  <?= esc_json($blockTypes) ?>,
-        blocks: <?= esc_json($entry->blocks) ?>,
-        media:  <?= esc_json($mediaMap) ?>,
-        icons:  <?= esc_json($iconMap) ?>,
-        allowed: <?= esc_json(HiCMS\Support\Html::allowed()) ?>
-    };
+<?php
+/*
+ * EDİTÖR VERİSİ BETİK DEĞİL, VERİ.
+ *
+ * 0.3.0'a kadar bu blok `window.HI_EDITOR = {…}` yazan satır içi bir betikti
+ * ve `<main>` içindeydi. Anında sayfa geçişi (nav.js) bölgeyi değiştirirken
+ * gelen işaretlemedeki <script> etiketleri ÇALIŞMAZ — HTML standardı böyle.
+ * Yani editöre geçildiğinde veri hiç kurulmuyor ve blok editörü ölüyordu.
+ *
+ * `type="application/json"` bir betik değil veri taşıyıcısıdır: çalıştırılmaz
+ * ama DOM'a bir öğe olarak girer, dolayısıyla bölge değişiminden sonra da
+ * okunabilir. editor.js onu ayrıştırıyor.
+ *
+ * İzin listesi de buradan gelir: richtext.js kendi satır içi etiket tablosunu
+ * taşıyordu; sunucudaki allowlist (src/Support/Html.php) değişince istemci
+ * sessizce ayrışır ve kullanıcı uyguladığı biçimin kaydedildikten sonra
+ * kaybolduğunu görür. Tek kaynak sunucu.
+ */
+?>
+<script type="application/json" id="hi-editor-data">
+    <?= esc_json([
+        'types'   => $blockTypes,
+        'blocks'  => $entry->blocks,
+        'media'   => $mediaMap,
+        'icons'   => $iconMap,
+        'allowed' => HiCMS\Support\Html::allowed(),
+    ]) ?>
 </script>
+
 <?php // richtext.js editor.js'ten ÖNCE: editör alan kurarken HiRichText hazır olmalı. ?>
 <script src="<?= esc_attr(admin_asset('assets/js/richtext.js')) ?>"></script>
 <script src="<?= esc_attr(admin_asset('assets/js/editor.js')) ?>"></script>
@@ -613,7 +623,7 @@ admin_head($page);
         var modal = document.getElementById('media-modal');
         if (!pick || !field || !modal) return;
 
-        var media = window.HI_EDITOR.media || {};
+        var media = (window.HI_EDITOR || {}).media || {};
 
         pick.addEventListener('click', function () {
             function choose(event) {

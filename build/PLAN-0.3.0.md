@@ -158,8 +158,59 @@ Bunlar yeni tasarımdan bağımsız, şu an yayındaki paketin hataları:
 içerik `max-width: none`, `.btn`/`.input` 28px, öznitelik yokken karanlık tema
 geliyor, yatay kaydırma yok. `build/dbtest.php` 57/57 geçiyor.
 
+### Oturum kilidi ve 0.2.0'dan gelen dokuz hata (doğrulandı)
+
+`Auth::closeSession()` eklendi; planlayıcı tick'inde ve panel render sonunda
+çağrılıyor. Dokuz hatanın tamamı düzeltildi, altısı `dbtest`'te regresyon
+denetimiyle kilitlendi.
+
+### Zengin metin ve temizleyici (doğrulandı)
+
+`admin/assets/js/richtext.js` + `src/Support/Html.php`. Ölçülen: editör sayfası
+3340 → 1615px, paragraf bloğu 275 → 57px, `contenteditable` 0 → 6, ham etiket
+görünmüyor. Temizleme kayıt sınırına taşındı
+(`BlockRegistry::sanitizeTree()` → `ContentRepository::save()`).
+
+Üç bağımsız saldırgan taraması yapıldı; bulunan atlatmalar `smoke.php`'de
+kilitli (129 → 224 denetim). Karar: DOMDocument değil kendi tokenizer'ı —
+`dom` eklentisi zorunlu gereksinim listesinde yok ve kapatılabiliyor.
+
+### Dinamizm katmanı (doğrulandı)
+
+**Sunucuya kısmi render sözleşmesi EKLENMEDİ.** Envanter `admin_head()`'in açık
+`<main>` ile döndüğünü gösterdi; bölmek 18 sayfayı ve dört eklentiyi aynı anda
+kırardı. Yerine sayfa istemcide ayrıştırılıp `<main>` ve `.bar-crumb`
+değiştiriliyor — sunucuda sıfır değişiklik, eklenti sayfaları kazancı
+kendiliğinden alıyor.
+
+Eleştirmenin üç tuzağı da kapatıldı:
+
+1. **Bölge değişimi `<script>` çalıştırmaz.** Editör verisi satır içi betikten
+   `<script type="application/json" id="hi-editor-data">` öğesine taşındı: veri
+   çalıştırılmaz ama DOM'a girer, dolayısıyla okunabilir. Ayrıca `nav.js`
+   bölgedeki betikleri **kendisi çalıştırıyor** — dış betik daha önce
+   yüklenmemişse yükleyip bekliyor, satır içi betiği yeniden koşuyor. Bu olmadan
+   kendi betiğini taşıyan her eklenti sayfası sessizce bozulurdu.
+2. **Tembel kurulum tek seferlik.** `HiAdmin.onMount()` sözleşmesi eklendi;
+   `init()` genel ve kapsamlı olarak ayrıldı, öğeye bağlanan tüm init'ler
+   `once()` ile korunuyor, bu yüzden yeniden koşmak ikinci dinleyici bağlamıyor.
+3. **Sıfır sonuç durumu.** Alt bölge değil `<main>`'in tamamı değiştiği için
+   boş/dolu dalı kendiliğinden geliyor; tarayıcıda doğrulandı.
+
+POST formlarına DOKUNULMADI ve bu bilinçli: panel 303 + flash kalıbıyla
+çalışıyor, dosya yüklemesi var, yarıda kesilen bir POST'un sunucuda ne kadar iş
+yaptığı belirsiz. Kaydetmeyi fetch'e taşımak gerçek veri kaybı riski taşır,
+kazancı küçük.
+
+Komut paleti (`palette.js`): komutlar ayrı bir kayıttan değil DOM'daki menüden
+toplanıyor, yani eklentilerin eklediği sayfalar otomatik olarak palete giriyor.
+Türkçe duyarlı bulanık arama, eşleşme yoksa içerik aramasına düşüyor.
+
+Tarayıcıda ölçülen: tam sayfa yüklenmiyor, başlık/URL/konum yolu güncelleniyor,
+editör her geçişte kuruluyor, geri tuşu çalışıyor, palet bölge değişiminden
+sonra komutları yeni DOM'dan topluyor.
+
 ## Sıradaki iş
 
-Sırayla: oturum kilidi (her şeyin önkoşulu) → zengin metin + temizleyici →
-dinamizm katmanı → yazma deneyimi → eklenti altyapısı → beş eklentinin taşınması
-→ 0.2.0'dan gelen dokuz hata → doğrulama ve paket.
+Yazma deneyimi → eklenti altyapısı → beş eklentinin taşınması → hız/ölçek →
+doğrulama ve paket.

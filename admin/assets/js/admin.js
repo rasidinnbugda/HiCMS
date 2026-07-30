@@ -15,6 +15,28 @@
     const $ = (sel, scope) => (scope || document).querySelector(sel);
     const $$ = (sel, scope) => Array.from((scope || document).querySelectorAll(sel));
 
+    /**
+     * Bir öğeye bir davranışın YALNIZCA BİR KEZ bağlanmasını sağlar.
+     *
+     * Bölge değişiminden sonra (bkz. nav.js) init() yeniden çalıştırılır ki
+     * yeni gelen DOM davranış kazansın. Ama kenar çubuğu, komut şeridi ve
+     * kalıcı pencereler yerinde kalıyor; koruma olmadan onlara ikinci, üçüncü
+     * dinleyici bağlanır ve tek tıkta iki kez açılıp kapanan menüler oluşur.
+     *
+     * İşaret öğenin kendisinde durur, DOM'dan çıkan öğeyle birlikte gider.
+     */
+    function once(el, key) {
+        const store = el.__hiBound || (el.__hiBound = {});
+
+        if (store[key]) {
+            return false;
+        }
+
+        store[key] = true;
+
+        return true;
+    }
+
     /* --------------------------------------------------------------------
      * Renk şeması
      * ----------------------------------------------------------------- */
@@ -157,6 +179,8 @@
 
     function initModals() {
         $$('[data-modal]').forEach((btn) => {
+            if (!once(btn, 'modal-open')) return;
+
             btn.addEventListener('click', (event) => {
                 event.preventDefault();
                 openModal($(btn.getAttribute('data-modal')));
@@ -164,6 +188,8 @@
         });
 
         $$('[data-close]').forEach((btn) => {
+            if (!once(btn, 'modal-close')) return;
+
             btn.addEventListener('click', (event) => {
                 event.preventDefault();
                 closeModal(btn.closest('.modal'));
@@ -171,6 +197,8 @@
         });
 
         $$('.modal').forEach((modal) => {
+            if (!once(modal, 'modal-scrim')) return;
+
             modal.addEventListener('click', (event) => {
                 if (event.target === modal) closeModal(modal);
             });
@@ -185,6 +213,7 @@
         $$('[data-check-all]').forEach((master) => {
             const table = document.getElementById(master.getAttribute('data-check-all'));
             if (!table) return;
+            if (!once(master, 'check-all')) return;
 
             const boxes = () => $$('tbody input[type="checkbox"]', table);
             const bulk = $('[data-bulk="' + table.id + '"]');
@@ -209,7 +238,10 @@
                 sync();
             });
 
-            boxes().forEach((b) => b.addEventListener('change', sync));
+            boxes().forEach((b) => {
+                if (once(b, 'check-row')) b.addEventListener('change', sync);
+            });
+
             sync();
         });
     }
@@ -231,6 +263,7 @@
         const source = $('[data-slug-from]');
         const target = $('[data-slug-to]');
         if (!source || !target) return;
+        if (!once(source, 'slug')) return;
 
         let manual = target.value.trim() !== '';
 
@@ -245,6 +278,11 @@
     function initWordCount() {
         const output = $('[data-count-words]');
         if (!output) return;
+        if (!once(output, 'word-count')) {
+            // Sayaç zaten bağlı ama DOM değişmiş olabilir; yalnızca yenile.
+            if (window.hiRecount) window.hiRecount();
+            return;
+        }
 
         const minutes = $('[data-count-minutes]');
 
@@ -274,6 +312,8 @@
 
     function initSortable() {
         $$('[data-sortable]').forEach((list) => {
+            if (!once(list, 'sortable')) return;
+
             let dragged = null;
 
             list.addEventListener('dragstart', (event) => {
@@ -318,6 +358,8 @@
 
     function initDrop() {
         $$('.drop').forEach((zone) => {
+            if (!once(zone, 'drop')) return;
+
             const input = $('input[type="file"]', zone);
 
             zone.addEventListener('click', () => { if (input) input.click(); });
@@ -438,20 +480,55 @@
      * Başlat
      * ----------------------------------------------------------------- */
 
-    function init() {
-        initScheme();
-        initSidebar();
-        initMenus();
-        initDismiss();
-        initConfirm();
+    /* --------------------------------------------------------------------
+     * Bağlanma
+     * -------------------------------------------------------------------
+     * İki katman:
+     *
+     *   GENEL   — sayfa ömrü boyunca bir kez. Belge düzeyinde delege olay ya
+     *             da çerçevedeki (kenar çubuğu, komut şeridi) kalıcı öğeler.
+     *   KAPSAMLI— her DOM değişiminden sonra yeniden. nav.js bölge değiştirince
+     *             yeni gelen işaretlemenin davranış kazanması gerekiyor.
+     *
+     * Kapsamlı init'ler `once()` ile korunuyor, bu yüzden yeniden çalıştırmak
+     * ikinci dinleyici bağlamaz.
+     * ----------------------------------------------------------------- */
+
+    /** @type {Array<function(Element):void>} */
+    const mountHooks = [];
+
+    function mount(container) {
         initModals();
         initCheckAll();
         initSlug();
         initWordCount();
         initSortable();
         initDrop();
+
+        const scope = container || document;
+
+        mountHooks.forEach((hook) => {
+            try {
+                hook(scope);
+            } catch (error) {
+                // Bir kancanın patlaması diğerlerini ve gezinmeyi durdurmasın.
+                if (window.console) console.error('HiAdmin mount kancası hata verdi', error);
+            }
+        });
+    }
+
+    function init() {
+        // Genel: bir kez.
+        initScheme();
+        initSidebar();
+        initMenus();
+        initDismiss();
+        initConfirm();
         initKeys();
         initDirtyGuard();
+
+        // Kapsamlı: şimdi ve her bölge değişiminde.
+        mount(document);
     }
 
     if (document.readyState === 'loading') {
@@ -460,5 +537,33 @@
         init();
     }
 
-    window.HiAdmin = { toast, slugify, openModal, closeModal, initSortable, initCheckAll };
+    window.HiAdmin = {
+        toast,
+        slugify,
+        openModal,
+        closeModal,
+        initSortable,
+        initCheckAll,
+        once,
+        mount,
+        /**
+         * Bölge değişiminden sonra çalışacak kanca kaydeder.
+         *
+         * Eklentiler ve editör bunu kullanır: sayfanın bir parçası
+         * değiştiğinde kendi kurulumlarını yeniden yapmaları gerekiyor.
+         * Kanca hemen bir kez de çağrılır, böylece ilk yüklemede ayrı bir
+         * kurulum koduna gerek kalmıyor.
+         */
+        onMount: function (hook) {
+            if (typeof hook !== 'function') return;
+
+            mountHooks.push(hook);
+
+            try {
+                hook(document);
+            } catch (error) {
+                if (window.console) console.error('HiAdmin mount kancası hata verdi', error);
+            }
+        },
+    };
 })();

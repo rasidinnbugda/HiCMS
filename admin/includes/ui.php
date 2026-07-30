@@ -450,6 +450,15 @@ function admin_foot(): void
 <div class="scrim" data-scrim hidden></div>
 
 <script src="<?= esc_attr(admin_asset('assets/js/admin.js')) ?>"></script>
+<?php
+/*
+ * nav.js admin.js'ten SONRA: HiAdmin.mount() sözleşmesine bağlanıyor.
+ * Yüklenmezse panel 0.2.0'daki gibi tam sayfa yüklemesiyle çalışır —
+ * hiçbir işlev buna bağımlı değil.
+ */
+?>
+<script src="<?= esc_attr(admin_asset('assets/js/nav.js')) ?>"></script>
+<script src="<?= esc_attr(admin_asset('assets/js/palette.js')) ?>"></script>
 <?php hi()->events()->emit('admin.footer'); ?>
 </body>
 </html>
