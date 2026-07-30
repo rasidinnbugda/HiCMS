@@ -533,6 +533,114 @@ $wrapped = $renderer->renderBlocks([['type' => 'paragraph', 'data' => ['text' =>
 check('BlockRendering olayı çıktıyı sarmalar', str_contains($wrapped, '<div class="sarmal">'));
 
 /* -------------------------------------------------------------------------
+ * 6b. Kanca sahipliği
+ * -------------------------------------------------------------------------
+ * Bir eklenti devre dışı bırakıldığında YALNIZCA kendi kancaları sökülmeli.
+ *
+ * 0.2.0'da tek araç forget($key) idi ve dinleyici verilmediğinde o kancanın
+ * TÜM dinleyicilerini siliyordu: bir eklentiyi kapatmak, aynı kancayı kullanan
+ * çekirdeği ve diğer eklentileri de sessizce susturuyordu.
+ * ---------------------------------------------------------------------- */
+
+echo "\nKanca sahipliği\n";
+
+$owners = new Dispatcher();
+$trace  = [];
+
+// Çekirdek kaydı: sahipsiz, hiç sökülmemeli.
+$owners->on('test.kanca', static function () use (&$trace): void { $trace[] = 'çekirdek'; });
+
+$owners->asOwner('plugin:a', static function () use ($owners, &$trace): void {
+    $owners->on('test.kanca', static function () use (&$trace): void { $trace[] = 'a'; });
+    $owners->addFilter('test.filtre', static fn(string $v): string => $v . '+a');
+});
+
+$owners->asOwner('plugin:b', static function () use ($owners, &$trace): void {
+    $owners->on('test.kanca', static function () use (&$trace): void { $trace[] = 'b'; });
+});
+
+$trace = [];
+$owners->emit('test.kanca');
+check('Üç dinleyici de çalışır', $trace === ['çekirdek', 'a', 'b'], implode(',', $trace));
+check('Sahipli filtre çalışır', $owners->filter('test.filtre', 'x') === 'x+a');
+
+$removed = $owners->forgetOwner('plugin:a');
+
+check('plugin:a kayıtları söküldü', $removed === 2, (string) $removed);
+
+$trace = [];
+$owners->emit('test.kanca');
+
+check(
+    'Yalnızca a sökülür; çekirdek ve b kalır',
+    $trace === ['çekirdek', 'b'],
+    implode(',', $trace)
+);
+
+check('a\'nın filtresi de söküldü', $owners->filter('test.filtre', 'x') === 'x');
+
+$owners->forgetOwner('plugin:b');
+$trace = [];
+$owners->emit('test.kanca');
+check('b sökülünce çekirdek yine kalır', $trace === ['çekirdek'], implode(',', $trace));
+
+/* -------------------------------------------------------------------------
+ * 6c. Eklenti bağımlılığı
+ * ---------------------------------------------------------------------- */
+
+echo "\nEklenti bağımlılığı\n";
+
+/*
+ * Künye gerçek dizinden okunur: böylece `requires` alanının JSON'dan doğru
+ * ayrıştırıldığı da denetlenmiş oluyor, yalnızca karşılaştırma mantığı değil.
+ */
+$tmpPlugin = sys_get_temp_dir() . '/hi-bagimli-' . bin2hex(random_bytes(4));
+
+mkdir($tmpPlugin, 0o775, true);
+file_put_contents($tmpPlugin . '/hicms.json', json_encode([
+    'slug'     => 'hi-bagimli',
+    'name'     => 'Bağımlı',
+    'version'  => '1.0.0',
+    'type'     => 'plugin',
+    'main'     => 'plugin.php',
+    'requires' => ['hicms' => '0.3.0', 'php' => '8.2', 'hi-types' => '1.0.0'],
+], JSON_UNESCAPED_UNICODE));
+file_put_contents($tmpPlugin . '/plugin.php', "<?php\n");
+
+$dependent = HiCMS\Extension\Manifest::fromDirectory($tmpPlugin, 'plugin');
+
+check('Künye okundu', $dependent->valid, $dependent->error);
+
+check('requires içinden eklentiler ayrılır',
+    array_keys($dependent->requiredPlugins()) === ['hi-types'],
+    implode(',', array_keys($dependent->requiredPlugins())));
+
+check('bağımlılık etkin değilse reddedilir',
+    !$dependent->checkDependencies([])['ok']);
+
+check('reddetme gerekçesi eklenti adını söyler',
+    str_contains($dependent->checkDependencies([])['error'], 'hi-types'),
+    $dependent->checkDependencies([])['error']);
+
+check('eski sürüm reddedilir',
+    !$dependent->checkDependencies(['hi-types' => '0.9.0'])['ok']);
+
+check('yeterli sürüm kabul edilir',
+    $dependent->checkDependencies(['hi-types' => '1.0.0'])['ok']);
+
+check('daha yeni sürüm de kabul edilir',
+    $dependent->checkDependencies(['hi-types' => '2.3.1'])['ok']);
+
+check('çekirdek sürümü de denetlenir',
+    !$dependent->checkCompatibility('0.2.0')['ok']
+        && $dependent->checkCompatibility('0.3.0')['ok']);
+
+// Geçici dizini bırakma.
+@unlink($tmpPlugin . '/hicms.json');
+@unlink($tmpPlugin . '/plugin.php');
+@rmdir($tmpPlugin);
+
+/* -------------------------------------------------------------------------
  * 5. İçerik modeli
  * ---------------------------------------------------------------------- */
 

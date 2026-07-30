@@ -214,6 +214,57 @@ final class Manifest
         return ['ok' => true, 'error' => ''];
     }
 
+    /**
+     * Bu paketin ihtiyaç duyduğu DİĞER eklentiler.
+     *
+     * `requires` içindeki `hicms` ve `php` dışındaki her anahtar bir eklenti
+     * kısa adı sayılır:
+     *
+     *     "requires": { "hicms": "0.3.0", "php": "8.2", "hi-types": "1.0.0" }
+     *
+     * @return array<string, string> kısa ad → en az sürüm
+     */
+    public function requiredPlugins(): array
+    {
+        $needs = $this->requires;
+
+        unset($needs['hicms'], $needs['php']);
+
+        return $needs;
+    }
+
+    /**
+     * Bağımlı olunan eklentiler etkin ve yeterli sürümde mi?
+     *
+     * @param array<string, string> $activeVersions kısa ad → kurulu sürüm
+     * @return array{ok: bool, error: string, missing: list<string>}
+     */
+    public function checkDependencies(array $activeVersions): array
+    {
+        $missing = [];
+
+        foreach ($this->requiredPlugins() as $slug => $minimum) {
+            if (!isset($activeVersions[$slug])) {
+                $missing[] = $slug . ($minimum !== '' ? ' (' . $minimum . '+)' : '');
+                continue;
+            }
+
+            if ($minimum !== '' && version_compare($activeVersions[$slug], $minimum, '<')) {
+                $missing[] = sprintf('%s %s+ (etkin: %s)', $slug, $minimum, $activeVersions[$slug]);
+            }
+        }
+
+        if ($missing !== []) {
+            return [
+                'ok'      => false,
+                'error'   => 'Şu eklentiler etkin ve güncel olmalı: ' . implode(', ', $missing) . '.',
+                'missing' => $missing,
+            ];
+        }
+
+        return ['ok' => true, 'error' => '', 'missing' => []];
+    }
+
     public function canSelfUpdate(): bool
     {
         return $this->repository !== '';

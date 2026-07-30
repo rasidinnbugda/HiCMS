@@ -172,7 +172,20 @@ final class PluginManager
             }
 
             $plugin = new $class($this->app, $manifest);
-            $plugin->boot();
+
+            /*
+             * boot() SAHİPLİK ALTINDA çalışır: içinde bağlanan her kanca
+             * eklentinin adını taşır. Devre dışı bırakıldığında
+             * Dispatcher::forgetOwner() yalnızca onun kayıtlarını söker.
+             *
+             * 0.2.0'da tek araç forget($key) idi ve dinleyici verilmediğinde
+             * o kancanın TÜM dinleyicilerini siliyordu — bir eklentiyi
+             * kapatmak, aynı kancayı kullanan diğer eklentileri ve çekirdeği
+             * de sessizce susturuyordu.
+             */
+            $this->app->events()->asOwner('plugin:' . $manifest->slug, static function () use ($plugin): void {
+                $plugin->boot();
+            });
 
             $this->instances[$manifest->slug] = $plugin;
 
@@ -183,7 +196,12 @@ final class PluginManager
             throw new \RuntimeException("Ana dosya bulunamadı: {$manifest->main}");
         }
 
-        require_once $manifest->mainFile();
+        // Sınıfsız eklenti: ana dosya doğrudan kanca bağlar, o da sahiplik altında.
+        $mainFile = $manifest->mainFile();
+
+        $this->app->events()->asOwner('plugin:' . $manifest->slug, static function () use ($mainFile): void {
+            require_once $mainFile;
+        });
     }
 
     /**
@@ -207,6 +225,21 @@ final class PluginManager
 
         if (!$compatibility['ok']) {
             return ['ok' => false, 'error' => $compatibility['error'], 'migrations' => []];
+        }
+
+        /*
+         * BAĞIMLILIK DENETİMİ
+         *
+         * Bağımlı olunan eklenti etkin değilse etkinleştirme reddedilir ve
+         * NEDEN reddedildiği yazılır. 0.2.0'da böyle bir denetim yoktu:
+         * bağımlılığı olan bir eklenti etkinleştirilebiliyor, sonra çalışma
+         * anında var olmayan bir sınıfa/kancaya erişip ölümcül hata veriyordu.
+         * Kullanıcı gördüğü şeyden sebebi çıkaramıyordu.
+         */
+        $dependencies = $manifest->checkDependencies($this->activeVersions());
+
+        if (!$dependencies['ok']) {
+            return ['ok' => false, 'error' => $dependencies['error'], 'migrations' => []];
         }
 
         if ($this->isActive($slug)) {
@@ -245,6 +278,53 @@ final class PluginManager
     }
 
     /**
+     * Etkin eklentilerin kısa ad → sürüm eşlemesi.
+     *
+     * @return array<string, string>
+     */
+    public function activeVersions(): array
+    {
+        $versions = [];
+
+        foreach ($this->activeSlugs() as $slug) {
+            $manifest = $this->get($slug);
+
+            if ($manifest !== null && $manifest->valid) {
+                $versions[$slug] = $manifest->version;
+            }
+        }
+
+        return $versions;
+    }
+
+    /**
+     * Bu eklentiye BAĞIMLI olan etkin eklentiler.
+     *
+     * Devre dışı bırakmadan önce sorulur: bir eklentiyi kapatmak ona bağımlı
+     * olanları sessizce bozmamalı.
+     *
+     * @return list<string>
+     */
+    public function dependents(string $slug): array
+    {
+        $dependents = [];
+
+        foreach ($this->activeSlugs() as $active) {
+            if ($active === $slug) {
+                continue;
+            }
+
+            $manifest = $this->get($active);
+
+            if ($manifest !== null && array_key_exists($slug, $manifest->requiredPlugins())) {
+                $dependents[] = $active;
+            }
+        }
+
+        return $dependents;
+    }
+
+    /**
      * Eklentiyi devre dışı bırakır.
      *
      * @return array{ok: bool, error: string}
@@ -253,6 +333,21 @@ final class PluginManager
     {
         if (!$this->isActive($slug)) {
             return ['ok' => true, 'error' => ''];
+        }
+
+        /*
+         * Ona bağımlı etkin bir eklenti varsa kapatma reddedilir. Aksi hâlde
+         * bağımlı eklenti bir sonraki istekte var olmayan bir şeye erişip
+         * ölümcül hata verir ve kullanıcı iki olayı birbirine bağlayamaz.
+         */
+        $dependents = $this->dependents($slug);
+
+        if ($dependents !== []) {
+            return [
+                'ok'    => false,
+                'error' => 'Bu eklenti kapatılamaz; şunlar ona bağımlı: ' . implode(', ', $dependents)
+                    . '. Önce onları devre dışı bırakın.',
+            ];
         }
 
         if ($runHook && isset($this->instances[$slug])) {
@@ -268,6 +363,13 @@ final class PluginManager
         $this->options->set('active_plugins', $active);
 
         $this->types->forgetSource('plugin:' . $slug);
+
+        /*
+         * Eklentinin bağladığı kancalar sökülür — yalnızca onun kayıtları.
+         * Aynı kancaya bağlı çekirdek ve diğer eklenti dinleyicileri kalır.
+         */
+        $this->events->forgetOwner('plugin:' . $slug);
+
         unset($this->instances[$slug]);
 
         $this->events->dispatch(new Toggled('plugin', $slug, false));

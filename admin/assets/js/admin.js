@@ -537,6 +537,27 @@
         init();
     }
 
+    /**
+     * Sunucudan gelen JSON verisini okur.
+     *
+     * PHP tarafı `hi_admin_data('ad', [...])` ile basar. Satır içi betik
+     * yerine veri öğesi kullanmak zorunlu: bölge değişiminde gelen <script>
+     * etiketleri çalıştırılmaz, veri öğeleri ise DOM'a girip okunabilir kalır.
+     */
+    function data(name) {
+        const node = document.getElementById('hi-data-' + name);
+
+        if (!node) return null;
+
+        try {
+            return JSON.parse(node.textContent || 'null');
+        } catch (error) {
+            if (window.console) console.error('hi-data-' + name + ' okunamadı', error);
+
+            return null;
+        }
+    }
+
     window.HiAdmin = {
         toast,
         slugify,
@@ -546,6 +567,7 @@
         initCheckAll,
         once,
         mount,
+        data,
         /**
          * Bölge değişiminden sonra çalışacak kanca kaydeder.
          *

@@ -64,6 +64,14 @@ final class Kernel
 
     private bool $booted = false;
 
+    /**
+     * Eklenti başına ayar tanımı. Container'da değil burada tutuluyor: anahtar
+     * çalışma anında belirlenen bir kısa ad, servis adı değil.
+     *
+     * @var array<string, Extension\Settings>
+     */
+    private array $pluginSettings = [];
+
     /** @var array<string, string> */
     private array $paths;
 
@@ -567,6 +575,18 @@ final class Kernel
     public function plugins(): PluginManager
     {
         return $this->container->get('plugins');
+    }
+
+    /**
+     * Bir eklentinin ayar tanımı.
+     *
+     * Eklenti başına tek örnek tutulur; aynı istekte iki kez çağırmak aynı
+     * nesneyi verir, dolayısıyla bir yerde tanımlanan bölümler başka yerde
+     * okunabilir.
+     */
+    public function settings(string $slug): Extension\Settings
+    {
+        return $this->pluginSettings[$slug] ??= new Extension\Settings($slug, $this->options());
     }
 
     public function scheduler(): Scheduler
