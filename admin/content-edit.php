@@ -584,11 +584,22 @@ admin_head($page);
 </div>
 
 <script>
+    <?php
+    /*
+     * İzin listesi SUNUCUDAN gelir.
+     *
+     * richtext.js kendi satır içi etiket tablosunu taşıyordu; sunucudaki
+     * allowlist (src/Support/Html.php) değiştiğinde istemci sessizce ayrışır ve
+     * kullanıcı uyguladığı biçimin kaydedildikten sonra kaybolduğunu görür.
+     * Tek kaynak sunucu; istemci onu türetiyor.
+     */
+    ?>
     window.HI_EDITOR = {
         types:  <?= esc_json($blockTypes) ?>,
         blocks: <?= esc_json($entry->blocks) ?>,
         media:  <?= esc_json($mediaMap) ?>,
-        icons:  <?= esc_json($iconMap) ?>
+        icons:  <?= esc_json($iconMap) ?>,
+        allowed: <?= esc_json(HiCMS\Support\Html::allowed()) ?>
     };
 </script>
 <?php // richtext.js editor.js'ten ÖNCE: editör alan kurarken HiRichText hazır olmalı. ?>

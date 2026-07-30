@@ -44,7 +44,10 @@
 
     /**
      * İzin verilen satır içi etiketler ve normalleştirme hedefleri.
-     * Sunucudaki allowlist ile aynı kümede tutulmalı (src/Support/Html.php).
+     *
+     * Tarayıcı `execCommand` ile <b>/<i>/<strike> üretebilir; bunlar veriye
+     * gitmeden anlamlı karşılıklarına çevrilir, yoksa aynı biçim iki farklı
+     * etiketle saklanır.
      */
     const INLINE = {
         strong: 'strong', b: 'strong',
@@ -58,10 +61,35 @@
         br: 'br',
     };
 
-    /** Etiket başına korunan öznitelikler. Geri kalan her şey düşer. */
-    const KEEP_ATTR = {
-        a: ['href', 'title', 'target', 'rel'],
-    };
+    /**
+     * Etiket başına korunan öznitelikler. Geri kalan her şey düşer.
+     *
+     * Sunucu izin listesini gönderiyorsa (window.HI_EDITOR.allowed) ondan
+     * türetilir. Tek kaynak sunucudaki src/Support/Html.php: aksi hâlde
+     * allowlist değiştiğinde istemci sessizce ayrışır ve kullanıcı uyguladığı
+     * biçimin kaydedildikten sonra kaybolduğunu görür.
+     */
+    const KEEP_ATTR = (function () {
+        const fallback = { a: ['href', 'title', 'target', 'rel'] };
+        const server = (window.HI_EDITOR || {}).allowed;
+
+        if (!server || typeof server !== 'object') {
+            return fallback;
+        }
+
+        const map = {};
+
+        Object.keys(INLINE).forEach(function (tag) {
+            const target = INLINE[tag];
+            const attrs = server[target];
+
+            if (Array.isArray(attrs) && attrs.length) {
+                map[target] = attrs;
+            }
+        });
+
+        return Object.keys(map).length ? map : fallback;
+    })();
 
     const MAC = /Mac|iPhone|iPad/.test(navigator.platform || '');
 

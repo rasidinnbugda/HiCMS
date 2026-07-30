@@ -104,15 +104,26 @@ final class Str
         return rtrim($cut, " ,.;:!?-") . $end;
     }
 
-    /** HTML'i temizleyip kısaltır. */
+    /**
+     * HTML'i temizleyip kısaltır.
+     *
+     * `strip_tags()` DEĞİL `Html::text()`: strip_tags `<script>` gövdesini
+     * metin olarak bırakır (özet "alert(1)" ile başlayabilir), blok
+     * etiketlerinin yerine ayırıcı koymaz (`<div>a</div><div>b</div>` → "ab")
+     * ve entity'leri çözmez. İkinci bir düz metin yolu bırakmamak için
+     * ikisi de temizleyicinin metin kipinden geçer.
+     *
+     * DİKKAT: dönen değer KAÇIRILMAMIŞ düz metindir (`Str::limit()` gibi).
+     * Şablonda basarken `esc_html()` kullanılmalıdır.
+     */
     public static function excerpt(string $html, int $length = 160, string $end = '…'): string
     {
-        return self::limit(strip_tags($html), $length, $end);
+        return self::limit(Html::text($html), $length, $end);
     }
 
     public static function words(string $text): int
     {
-        $text = trim(preg_replace('/\s+/u', ' ', strip_tags($text)) ?? '');
+        $text = trim(preg_replace('/\s+/u', ' ', Html::text($text)) ?? '');
 
         return $text === '' ? 0 : count(explode(' ', $text));
     }

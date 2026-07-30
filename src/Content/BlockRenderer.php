@@ -125,10 +125,19 @@ final class BlockRenderer
             return nl2br(trim($value), false);
         }
 
-        return implode('', array_map(
+        $html = implode('', array_map(
             static fn(string $p): string => '<p>' . nl2br(trim($p), false) . '</p>',
             $paragraphs
         ));
+
+        /* Paragrafa bölme temizleyiciden SONRA çalışıyor ve bölme noktası açık
+         * bir satır içi öğenin ortasına düşebiliyor: `<mark>bir\n\niki</mark>`
+         * girdisi `<p><mark>bir</p><p>iki</mark></p>` üretiyordu — DENGESİZ.
+         * Temizleyicinin "çıktı her zaman dengeli" güvencesi bu satırda
+         * yeniden kuruluyor; Html::clean() değişmez (idempotent) olduğu için
+         * ikinci geçiş zaten temiz olan parçalara dokunmaz.
+         * (ELEŞTİRMEN BULGUSU — bkz. build/smoke.php "HTML temizleyici".) */
+        return Html::clean($html);
     }
 
     /** Kullanıcı HTML'i — güvenli etiket kümesine indirgenir. */

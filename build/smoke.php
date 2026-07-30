@@ -31,6 +31,7 @@ use HiCMS\Install\Requirements;
 use HiCMS\Kernel;
 use HiCMS\Model\Entry;
 use HiCMS\Support\Dates;
+use HiCMS\Support\Html;
 use HiCMS\Support\Str;
 
 $passed = 0;
@@ -77,7 +78,360 @@ check('Türkçe tarih', Dates::format('2026-07-24 10:00:00', 'j F Y') === '24 Te
     Dates::format('2026-07-24 10:00:00', 'j F Y'));
 
 /* -------------------------------------------------------------------------
- * 2. Rota tablosu
+ * 2. HTML temizleyici
+ *
+ * Bu bölüm ÇEKİRDEK YÜKLENMEDEN ÖNCE çalışır (Kernel::boot() 8. bölümde) ve
+ * VERİTABANI GEREKTİRMEZ: temizleyicinin çekirdekten bağımsız olması bir
+ * tasarım şartıdır, aşağıda hem kaynak hem çalışma zamanı denetimiyle
+ * doğrulanır.
+ *
+ * Denetimlerin çoğu, üç bağımsız saldırgan taramasının bulduğu belirli bir
+ * ATLATMAYI ya da BOZULAN MEŞRU İÇERİĞİ kilitler. Bir denetim düşerse
+ * src/Support/Html.php içindeki "ELEŞTİRMEN BULGUSU" yorumlu satırlardan biri
+ * kaldırılmış demektir.
+ * ---------------------------------------------------------------------- */
+
+echo "\nHTML temizleyici\n";
+
+$clean = static fn(string $html): string => Html::clean($html);
+
+/* ---- çekirdekten bağımsızlık ---- */
+
+check('Temizleyici Kernel yüklemeden çalışır',
+    $clean('<p>a</p>') === '<p>a</p>' && !class_exists('HiCMS\Kernel', false));
+
+// Kaynakta da bağımlılık olmamalı: yorumlar ayıklanıp gerçek kod taranır.
+$htmlCode = '';
+
+foreach (token_get_all((string) file_get_contents($root . '/src/Support/Html.php')) as $token) {
+    if (is_array($token) && ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT)) {
+        continue;
+    }
+
+    $htmlCode .= is_array($token) ? $token[1] : $token;
+}
+
+check('Temizleyici kaynağında çekirdek çağrısı yok',
+    preg_match('/\b(?:Kernel|Dispatcher|hi_filter)\b|(?<![\w$>])hi\s*\(/', $htmlCode) !== 1);
+
+/* ---- kapatılan atlatmalar ---- */
+
+check('URL başındaki U+00A0 ile javascript: gizlenemez',
+    $clean('<a href="&nbsp;javascript:alert(1)">Fatura</a>') === 'Fatura',
+    $clean('<a href="&nbsp;javascript:alert(1)">Fatura</a>'));
+check('URL başındaki U+00A0 ile vbscript: gizlenemez',
+    $clean('<a href="&#160;vbscript:msgbox(1)">x</a>') === 'x');
+check('URL başındaki U+200B ile javascript: gizlenemez',
+    $clean("<a href=\"\u{200B}javascript:alert(1)\">x</a>") === 'x');
+check('Görünmez önekli data: img etiketi düşer',
+    $clean('<img src="&nbsp;data:image/svg+xml,<svg onload=alert(1)>" alt="x">') === '');
+check('Str::safeHtml aynı yolu kullanır',
+    Str::safeHtml('<a href="&nbsp;javascript:alert(1)">x</a>') === 'x');
+check('Sayısal denetim başvurusuyla şema gizlenemez',
+    $clean('<a href="&#14;javascript:alert(1)">x</a>') === 'x');
+check('Ters bölülü şema-göreli adres reddedilir',
+    $clean('<a href="https:/\evil.test/x">x</a>') === 'x',
+    $clean('<a href="https:/\evil.test/x">x</a>'));
+check('Çift ters bölülü adres reddedilir',
+    $clean('<a href="http:\\\\evil.test/x">x</a>') === 'x');
+check('Ters bölülü kullanıcı adı hilesi reddedilir',
+    $clean('<a href="http://evil.test\@ok.test/">x</a>') === 'x');
+check('Eğik çizgisiz http şeması kanonikleşir',
+    $clean('<a href="http:evil.test/x">x</a>') === '<a href="http://evil.test/x">x</a>',
+    $clean('<a href="http:evil.test/x">x</a>'));
+check('Fazla eğik çizgi kanonikleşir',
+    $clean('<a href="///evil.test/x">x</a>') === '<a href="https://evil.test/x">x</a>',
+    $clean('<a href="///evil.test/x">x</a>'));
+
+check('</style=1> ham metni kapatmaz',
+    $clean('<style>x{}</style=1><a href="/giris">Hesabinizi dogrulayin</a></style>') === '',
+    $clean('<style>x{}</style=1><a href="/giris">Hesabinizi dogrulayin</a></style>'));
+check('</script=1> ham metni kapatmaz',
+    $clean('<script>var a=1;</script=1>alert(9)+document.cookie</script>') === '');
+check('</title=1> ham metni kapatmaz',
+    $clean('<title>Gizli</title=1>SIZAN BASLIK</title>') === '');
+check('</svg=1> yabancı içeriği kapatmaz',
+    $clean('<svg><circle/></svg=1><b>SIZAN</b></svg>') === '');
+check('NUL ile ham metin kapanışı taklit edilemez',
+    $clean("<style>x{}</style\0>SIZAN{}</style>") === '',
+    $clean("<style>x{}</style\0>SIZAN{}</style>"));
+check('Bitiş etiketi öznitelikleri çözümlenir (ham metin)',
+    $clean('<style>a{}</style a=">">devam') === 'devam',
+    $clean('<style>a{}</style a=">">devam'));
+check('Bitiş etiketi öznitelikleri çözümlenir (blok)',
+    $clean('<p>bir</p attr="x>y">iki') === '<p>bir</p>iki',
+    $clean('<p>bir</p attr="x>y">iki'));
+check('Kapanış etiketinden metin sızmaz',
+    $clean('<p>a</p x="onclick=alert(1)>sizan metin">son') === '<p>a</p>son',
+    $clean('<p>a</p x="onclick=alert(1)>sizan metin">son'));
+
+check('Atasız tablo satırı table ile sarılır',
+    $clean('<tr><td>Ocak</td><td>1500</td></tr><tr><td>Subat</td><td>1700</td></tr>')
+        === '<table><tr><td>Ocak</td><td>1500</td></tr><tr><td>Subat</td><td>1700</td></tr></table>',
+    $clean('<tr><td>Ocak</td><td>1500</td></tr>'));
+check('Atasız hücre tam zincirle sarılır',
+    $clean('<th>Baslik</th>') === '<table><tr><th>Baslik</th></tr></table>',
+    $clean('<th>Baslik</th>'));
+check('Tablo bağlamındaki metin hücreye alınır',
+    $clean('<table>Onemli aciklama<tr><td>A</td></tr></table>')
+        === '<table><tr><td>Onemli aciklama</td></tr><tr><td>A</td></tr></table>',
+    $clean('<table>Onemli aciklama<tr><td>A</td></tr></table>'));
+check('Tablo bağlamındaki satır içi öğe hücreye alınır',
+    $clean('<table><b>foster</b><tr><td>h</td></tr></table>')
+        === '<table><tr><td><b>foster</b></td></tr><tr><td>h</td></tr></table>',
+    $clean('<table><b>foster</b><tr><td>h</td></tr></table>'));
+check('İç içe bağlantı kardeşe ayrılır',
+    $clean('<a href="/1">bir<a href="/2">iki</a></a>')
+        === '<a href="/1">bir</a><a href="/2">iki</a>',
+    $clean('<a href="/1">bir<a href="/2">iki</a></a>'));
+
+// Genişletme yolu: URL taşıyan her öznitelik ad ne olursa olsun doğrulanır.
+$extended = new Html(
+    ['button' => ['formaction'], 'video' => ['src', 'poster', 'onended', 'style']],
+    ['javascript', 'data', 'ftp']
+);
+
+check('formaction şeması denetlenir',
+    $extended->sanitize('<button formaction="javascript:alert(1)">g</button>') === '<button>g</button>',
+    $extended->sanitize('<button formaction="javascript:alert(1)">g</button>'));
+check('poster şeması denetlenir',
+    $extended->sanitize('<video poster="javascript:alert(1)" src="/v.mp4">v</video>')
+        === '<video src="/v.mp4">v</video>',
+    $extended->sanitize('<video poster="javascript:alert(1)" src="/v.mp4">v</video>'));
+check('Genişletme on* ve style açamaz',
+    $extended->sanitize('<video src="/v.mp4" onended="x" style="y">v</video>')
+        === '<video src="/v.mp4">v</video>');
+check('Tehlikeli şema genişletmeyle eklenemez',
+    $extended->sanitize('<a href="javascript:alert(1)">x</a>') === 'x');
+check('Meşru ek şema eklenebilir',
+    $extended->sanitize('<a href="ftp://a.test/x">f</a>') === '<a href="ftp://a.test/x">f</a>');
+
+// Paragrafa bölme temizleyicinin dengeli çıktı güvencesini bozmamalı.
+$richRenderer = new HiCMS\Content\BlockRenderer(
+    new BlockRegistry(),
+    new HiCMS\Repository\MediaRepository(new HiCMS\Database\Connection([])),
+    new HiCMS\Http\Url('https://site.test'),
+    new Dispatcher()
+);
+
+check('rich() paragrafa bölerken dengeyi korur',
+    $richRenderer->rich("<mark>ilk paragraf\n\nikinci paragraf</mark>")
+        === '<p><mark>ilk paragraf</mark></p><p>ikinci paragraf</p>',
+    $richRenderer->rich("<mark>ilk paragraf\n\nikinci paragraf</mark>"));
+
+/* ---- onarılan meşru içerik ---- */
+
+$pastedImage = '<p>Ekran:</p><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==" alt="ekran">';
+
+check('Panodan yapıştırılan gömülü görsel korunur', $clean($pastedImage) === $pastedImage,
+    $clean($pastedImage));
+check('data:image/svg+xml reddedilir',
+    $clean('<img src="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=" alt="x">') === '');
+check('Bozuk base64 gövdesi reddedilir',
+    $clean('<img src="data:image/png;base64,iV<script>" alt="a">') === '');
+check('Şema-göreli görsel https\'e yükseltilir',
+    $clean('<img src="//cdn.example.test/logo.png" alt="Logo" width="200">')
+        === '<img src="https://cdn.example.test/logo.png" alt="Logo" width="200">',
+    $clean('<img src="//cdn.example.test/logo.png" alt="Logo" width="200">'));
+check('Şema-göreli bağlantı https\'e yükseltilir',
+    $clean('<a href="//cdn.example.test/belge.pdf">Belge</a>')
+        === '<a href="https://cdn.example.test/belge.pdf">Belge</a>');
+check('Kaçırılmış &#10; URL\'de bozulmaz',
+    $clean('<a href="/x?a=1&amp;#10;b">x</a>') === '<a href="/x?a=1&amp;#10;b">x</a>',
+    $clean('<a href="/x?a=1&amp;#10;b">x</a>'));
+check('Kaçırılmış &#9; URL\'de bozulmaz',
+    $clean('<a href="/onizleme?html=%3Cp%3E&amp;#9;son">x</a>')
+        === '<a href="/onizleme?html=%3Cp%3E&amp;#9;son">x</a>');
+check('İzinsiz şemada ölü bağlantı bırakılmaz',
+    $clean('<p>Arsiv: <a href="ftp://a.test/2026.zip">indir</a> <a href="sms:+9055">SMS</a></p>')
+        === '<p>Arsiv: indir SMS</p>',
+    $clean('<p>Arsiv: <a href="ftp://a.test/2026.zip">indir</a> <a href="sms:+9055">SMS</a></p>'));
+check('Soyulan blok kelimeleri yapıştırmaz',
+    $clean('<div>Birinci paragraf.</div><div>Ikinci paragraf.</div>')
+        === "Birinci paragraf.\nIkinci paragraf.",
+    $clean('<div>Birinci paragraf.</div><div>Ikinci paragraf.</div>'));
+check('Soyulan h1 kelimeleri yapıştırmaz',
+    $clean('<h1>Ana Baslik</h1><h1>Ikinci Baslik</h1>') === "Ana Baslik\nIkinci Baslik");
+check('Çıktının sonunda sarkan ayırıcı kalmaz',
+    $clean('<div>tek</div>') === 'tek', $clean('<div>tek</div>'));
+
+/* Tablo bağlamında ayırıcı borcu hücre DIŞINA basılmamalı: hücre dışındaki
+ * boşluk ikinci geçişte düştüğü için çıktı değişmez (idempotent) olmazdı.
+ * Bu denetim 120.000 turluk bulaşık taramasında bulunan gerçek bir hatayı
+ * kilitler. */
+check('Tablo bağlamındaki ayırıcı borcu değişmezliği bozmaz',
+    $clean('<table><div><b>x</b>') === '<table><tr><td><b>x</b></td></tr></table>',
+    $clean('<table><div><b>x</b>'));
+
+$definitionList = '<dl><dt>HTML</dt><dd>Isaretleme dili</dd><dt>CSS</dt><dd>Bicem dili</dd></dl>';
+
+check('Tanım listesi korunur', $clean($definitionList) === $definitionList, $clean($definitionList));
+
+$tableWithCaption = '<table><caption>Aylik gelir</caption><tr><td>A</td></tr></table>';
+
+check('Tablo başlığı korunur', $clean($tableWithCaption) === $tableWithCaption,
+    $clean($tableWithCaption));
+check('CSS içindeki <!-- belgenin kalanını yutmaz',
+    $clean('<style>/*<!--*/ p{}</style><b>gorunur</b>') === '<b>gorunur</b>',
+    $clean('<style>/*<!--*/ p{}</style><b>gorunur</b>'));
+check('--!> yorum kapanışı tanınır',
+    $clean('<p>bir</p><!-- yorum --!><p>iki</p>') === '<p>bir</p><p>iki</p>',
+    $clean('<p>bir</p><!-- yorum --!><p>iki</p>'));
+check('Kapanmamış form içeriği silmez',
+    $clean('<p>bir</p><form action=x><p>iki</p><p>uc</p>') === '<p>bir</p><p>iki</p><p>uc</p>',
+    $clean('<p>bir</p><form action=x><p>iki</p><p>uc</p>'));
+check('Kapanmamış noscript içeriği silmez',
+    $clean('<p>a</p><noscript><p>b</p>') === '<p>a</p><p>b</p>');
+check('Kapanan form içeriğiyle silinir',
+    $clean('<p>a</p><form><input name=x><p>gizli</p></form><p>b</p>') === '<p>a</p><p>b</p>',
+    $clean('<p>a</p><form><input name=x><p>gizli</p></form><p>b</p>'));
+check('Özel öğe style sanılmaz',
+    $clean('<style-x>ONEMLI METIN</style-x><p>devam</p>') === 'ONEMLI METIN<p>devam</p>',
+    $clean('<style-x>ONEMLI METIN</style-x><p>devam</p>'));
+check('İki nokta içeren ad script sanılmaz',
+    $clean('<script:x>METIN</script:x>') === 'METIN', $clean('<script:x>METIN</script:x>'));
+check('textarea metni kaybolmaz',
+    $clean('<textarea>KAYBOLAN METIN</textarea>') === 'KAYBOLAN METIN');
+check('xmp içeriği metin olarak korunur',
+    $clean('<xmp><b>kalin</b></xmp>') === '&lt;b&gt;kalin&lt;/b&gt;',
+    $clean('<xmp><b>kalin</b></xmp>'));
+
+$nestedList = '<ul><li>Birinci<ul><li>Alt madde A</li><li>Alt madde B</li></ul></li><li>İkinci</li></ul>';
+$mixedList  = '<ul><li>a<ol><li>1</li><li>2</li></ol></li></ul>';
+$deepList   = '<ul><li>a<ul><li>b<ul><li>c</li></ul></li></ul></li></ul>';
+$nestedTable = '<table><tbody><tr><td><table><tbody><tr><td>ic</td></tr></tbody></table></td></tr></tbody></table>';
+$headingTree = '<h2>a<blockquote><h3>b</h3></blockquote>c</h2>';
+
+check('İç içe liste korunur', $clean($nestedList) === $nestedList, $clean($nestedList));
+check('Liste içinde numaralı liste korunur', $clean($mixedList) === $mixedList, $clean($mixedList));
+check('Üç seviyeli liste korunur', $clean($deepList) === $deepList, $clean($deepList));
+check('İç içe tablo korunur', $clean($nestedTable) === $nestedTable, $clean($nestedTable));
+check('Başlık içindeki blok yıkılmaz', $clean($headingTree) === $headingTree, $clean($headingTree));
+check('Aynı düzey başlık örtük kapanır',
+    $clean('<h2>bir<h2>iki') === '<h2>bir</h2><h2>iki</h2>', $clean('<h2>bir<h2>iki'));
+
+check('Google Docs sarmalayıcısı her şeyi kalın yapmaz',
+    $clean('<b style="font-weight:normal" id="docs-internal-guid-x"><p dir="ltr">'
+        . '<span style="font-weight:700">Kalın</span></p></b>') === '<p><span>Kalın</span></p>',
+    $clean('<b style="font-weight:normal"><p><span>Kalın</span></p></b>'));
+check('strike ve tt modern karşılığına çevrilir',
+    $clean('<p><strike>eski</strike> <tt>kod</tt></p>') === '<p><s>eski</s> <code>kod</code></p>',
+    $clean('<p><strike>eski</strike> <tt>kod</tt></p>'));
+check('abbr/cite/q/kbd/time biçimi korunur',
+    $clean('<p><abbr title="HyperText">HTML</abbr> <cite>Kitap</cite> <q>alinti</q> '
+        . '<kbd>Ctrl</kbd> <time datetime="2026-07-30">bugun</time></p>')
+        === '<p><abbr title="HyperText">HTML</abbr> <cite>Kitap</cite> <q>alinti</q> '
+        . '<kbd>Ctrl</kbd> <time datetime="2026-07-30">bugun</time></p>');
+check('Kod örneğindeki < yutulmaz',
+    $clean('<code>if (a<b) { return; }</code>') === '<code>if (a&lt;b) { return; }</code>',
+    $clean('<code>if (a<b) { return; }</code>'));
+check('Kod örneğindeki jenerik tür korunur',
+    $clean('<pre><code>List<String> x = new ArrayList<>();</code></pre>')
+        === '<pre><code>List&lt;String&gt; x = new ArrayList&lt;&gt;();</code></pre>',
+    $clean('<pre><code>List<String> x = new ArrayList<>();</code></pre>'));
+check('Kod içindeki <script> metne dönüşür ve etkisizdir',
+    $clean('<pre><code><script>alert(1)</script></code></pre>')
+        === '<pre><code>&lt;script&gt;alert(1)&lt;/script&gt;</code></pre>',
+    $clean('<pre><code><script>alert(1)</script></code></pre>'));
+check('Geçersiz bayt soru işaretine dönüşmez',
+    $clean("<p>a\xFFc</p>") === '<p>aÿc</p>', $clean("<p>a\xFFc</p>"));
+
+$cutTitle = $clean('<a href="/x" title="' . str_repeat('ç', 498)
+    . "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F466}son\">y</a>");
+
+check('Kırpılan öznitelikte sarkan ZWJ kalmaz',
+    !str_contains($cutTitle, "\u{200D}\"") && str_contains($cutTitle, "\u{1F468}"), $cutTitle);
+
+/* ---- temel güvenceler ---- */
+
+$inline = '<strong>a</strong><em>b</em><a href="/x">c</a><code>d</code><s>e</s>'
+    . '<sup>f</sup><sub>g</sub><mark>h</mark>';
+
+check('İzinli satır içi etiketler geçer', $clean($inline) === $inline, $clean($inline));
+check('class/style/id/data-* düşer',
+    $clean('<p class="x" style="color:red" id="y" data-z="1">a</p>') === '<p>a</p>',
+    $clean('<p class="x" style="color:red" id="y" data-z="1">a</p>'));
+check('srcset ve sizes düşer',
+    $clean('<img src="/a.png" alt="A" srcset="/b.png 2x" sizes="100vw">')
+        === '<img src="/a.png" alt="A">');
+check('Olay öznitelikleri düşer',
+    $clean('<img src="/x.png" onerror="alert(1)" alt="a">') === '<img src="/x.png" alt="a">');
+check('target=_blank rel\'e noopener ekler',
+    $clean('<a href="https://a.test" target="_blank">x</a>')
+        === '<a href="https://a.test" rel="noopener" target="_blank">x</a>',
+    $clean('<a href="https://a.test" target="_blank">x</a>'));
+check('Var olan rel korunur, noopener eklenir',
+    $clean('<a href="https://a.test" target="_blank" rel="nofollow">x</a>')
+        === '<a href="https://a.test" rel="nofollow noopener" target="_blank">x</a>');
+check('Bilinmeyen rel belirteci düşer',
+    $clean('<a href="/x" rel="alert(1) nofollow">x</a>') === '<a href="/x" rel="nofollow">x</a>');
+check('target=_top düşer', $clean('<a href="/x" target="_top">x</a>') === '<a href="/x">x</a>');
+
+$turkish = "<p>Çığır açan şeyler: ĞÜŞİÖÇ\tsekme\nsatır sonu</p>";
+
+check('Türkçe karakter, sekme ve satır sonu korunur', $clean($turkish) === $turkish, $clean($turkish));
+check('pre girintisi korunur',
+    $clean("<pre>satir1\n\tgirintili\n\nson</pre>") === "<pre>satir1\n\tgirintili\n\nson</pre>");
+check('Boş olmayan boşluk (nbsp) korunur', $clean('<p>a&nbsp;b</p>') === '<p>a&nbsp;b</p>');
+check('Entity çıktısı çift kaçışa uğramaz',
+    $clean('<p>&amp; &lt;script&gt;</p>') === '<p>&amp; &lt;script&gt;</p>');
+check('Emoji ve matematik işaretleri korunur',
+    $clean('<p>👨‍👩‍👦 ≤ ≥ — “ ”</p>') === '<p>👨‍👩‍👦 ≤ ≥ — “ ”</p>');
+
+check('script etiketi içeriğiyle silinir',
+    $clean('<p>a</p><script>alert(1)</script><p>b</p>') === '<p>a</p><p>b</p>',
+    $clean('<p>a</p><script>alert(1)</script><p>b</p>'));
+check('style etiketi içeriğiyle silinir (CSS sızmaz)',
+    $clean('<p>a</p><style>.a{color:red}</style><p>b</p>') === '<p>a</p><p>b</p>',
+    $clean('<p>a</p><style>.a{color:red}</style><p>b</p>'));
+check('iframe/object/embed/input silinir',
+    $clean('<iframe src="https://e.test">y</iframe><object data="x"><embed src="y"></object><input>')
+        === '', $clean('<iframe src="https://e.test">y</iframe>'));
+check('Kendini kapatan script açılış sayılır',
+    $clean('<script/>alert(1)') === '', $clean('<script/>alert(1)'));
+check('Yorum silinir', $clean('<p>a</p><!-- gizli --><p>b</p>') === '<p>a</p><p>b</p>');
+check('Kapanmamış etiket dengelenir',
+    $clean('<p><strong>a') === '<p><strong>a</strong></p>');
+check('Sahte kapanış yok sayılır', $clean('</p></div></b><p>a</p>') === '<p>a</p>');
+check('Çözümleme sigortası derinlikte devrede',
+    str_contains($clean(str_repeat('<b>', 200) . 'derin'), 'derin'));
+
+$corpus = [
+    $inline, $nestedList, $nestedTable, $headingTree, $definitionList, $pastedImage,
+    '<table>Onemli<tr><td>A</td></tr></table>', '<div>a</div><div>b</div>',
+    '<pre><code>List<String> x;</code></pre>', '<textarea>x</textarea>',
+    '<a href="//cdn.test/x">y</a>', '<b style="x"><p>a</p></b>',
+    '<table><div><b>x</b>', '<table><tr><div>a</div><b>x</b>', '<h2>bir<h2>iki',
+    '<style>a{}</style a=">">devam', '<xmp><b>k</b></xmp>', '<tr><td>a</td></tr>',
+];
+
+$stable = true;
+
+foreach ($corpus as $sample) {
+    $once = $clean($sample);
+
+    if ($clean($once) !== $once) {
+        $stable = false;
+        break;
+    }
+}
+
+check('clean() değişmezdir (idempotent)', $stable);
+
+check('Html::allowed() tabloyu döndürür',
+    array_key_exists('a', Html::allowed()) && Html::allowed()['a'] === ['href', 'title', 'rel', 'target']
+        && Html::allowed()['p'] === []);
+check('Html::text() etiketsiz metin döndürür',
+    trim(Html::text('<p>bir</p><p>iki</p>')) === "bir\n\niki",
+    json_encode(Html::text('<p>bir</p><p>iki</p>')));
+check('Html::text() betik gövdesini almaz',
+    trim(Html::text('<script>alert(1)</script>metin')) === 'metin');
+check('Str::excerpt betik gövdesini almaz',
+    Str::excerpt('<script>alert(1)</script><p>Gerçek özet</p>') === 'Gerçek özet',
+    Str::excerpt('<script>alert(1)</script><p>Gerçek özet</p>'));
+
+/* -------------------------------------------------------------------------
+ * 3. Rota tablosu
  * ---------------------------------------------------------------------- */
 
 echo "\nYönlendirme\n";
@@ -125,7 +479,7 @@ check('Adlandırılmış rotadan yol', $router->path('single', ['slug' => 'x-y']
     (string) $router->path('single', ['slug' => 'x-y']));
 
 /* -------------------------------------------------------------------------
- * 3. Blok işleme
+ * 4. Blok işleme
  * ---------------------------------------------------------------------- */
 
 echo "\nBlok sistemi\n";
@@ -179,7 +533,7 @@ $wrapped = $renderer->renderBlocks([['type' => 'paragraph', 'data' => ['text' =>
 check('BlockRendering olayı çıktıyı sarmalar', str_contains($wrapped, '<div class="sarmal">'));
 
 /* -------------------------------------------------------------------------
- * 4. İçerik modeli
+ * 5. İçerik modeli
  * ---------------------------------------------------------------------- */
 
 echo "\nİçerik modeli\n";
@@ -212,7 +566,7 @@ check('İleri tarihli yayın görünmez', !$future->isPublished());
 check('İleri tarihli yayın zamanlanmış sayılır', $future->isScheduled());
 
 /* -------------------------------------------------------------------------
- * 5. İçerik türleri
+ * 6. İçerik türleri
  * ---------------------------------------------------------------------- */
 
 echo "\nİçerik türleri\n";
@@ -258,7 +612,7 @@ $types->forgetSource('plugin:test');
 check('Kaynak kaldırılınca tür düşer', !$types->has('portfolyo'));
 
 /* -------------------------------------------------------------------------
- * 6. Şema SQL üretimi
+ * 7. Şema SQL üretimi
  * ---------------------------------------------------------------------- */
 
 echo "\nVeritabanı şeması\n";
@@ -389,7 +743,7 @@ check('Eklenti migration\'ları da denetlendi',
     implode(',', array_keys($generated)));
 
 /* -------------------------------------------------------------------------
- * 7. Önyükleme (yapılandırma yok)
+ * 8. Önyükleme (yapılandırma yok)
  * ---------------------------------------------------------------------- */
 
 echo "\nÖnyükleme\n";
@@ -481,7 +835,7 @@ check('Çekirdek migration kaynağı kayıtlı',
     array_key_exists('core', $app->migrator()->sources()));
 
 /* -------------------------------------------------------------------------
- * 8. Gereksinim denetimi
+ * 9. Gereksinim denetimi
  * ---------------------------------------------------------------------- */
 
 echo "\nGereksinimler\n";
