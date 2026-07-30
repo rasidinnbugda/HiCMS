@@ -328,15 +328,55 @@ final class Connection
      * yapılabilir — LIKE joker karakterleri (`_`) yanlış tabloyu bulmaz.
      */
 
+    /**
+     * İstek içi tablo varlığı belleği.
+     *
+     * `tableExists()` her çağrıda bir information_schema sorgusu yapıyordu ve
+     * çağrı sayısı azımsanacak değildi: `isInstalled()` (iki kez),
+     * `OptionRepository` (okuma ve yazmada ayrı ayrı), `Auth` dört yerde,
+     * `AuditLogRepository`, `Scheduler`, eklentiler. Tipik bir istekte 3-5 sabit
+     * sorgu, hiçbiri gerçekten değişmeyen bir bilgi için.
+     *
+     * Tablo bir istek ortasında oluşabilir (migration çalışırken), o yüzden
+     * yalnızca OLUMSUZ sonuç belleklenmez: "yok" cevabı saklanmaz, "var"
+     * cevabı saklanır. Böylece kurulum ve güncelleme akışları bozulmuyor.
+     *
+     * @var array<string, true>
+     */
+    private array $knownTables = [];
+
     public function tableExists(string $table): bool
     {
+        $name = $this->t($table);
+
+        if (isset($this->knownTables[$name])) {
+            return true;
+        }
+
         $found = $this->scalar(
             'SELECT 1 FROM information_schema.TABLES'
             . ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1',
-            [$this->t($table)]
+            [$name]
         );
 
-        return $found !== null;
+        if ($found !== null) {
+            $this->knownTables[$name] = true;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Tablo varlığı belleğini boşaltır.
+     *
+     * Migration ve yedek geri yükleme tablo düşürebilir; o yolların belleği
+     * temizlemesi gerekiyor, yoksa var olmayan bir tabloya sorgu gider.
+     */
+    public function forgetSchemaCache(): void
+    {
+        $this->knownTables = [];
     }
 
     public function columnExists(string $table, string $column): bool

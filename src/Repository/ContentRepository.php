@@ -120,7 +120,24 @@ final class ContentRepository
         }
 
         if (($args['search'] ?? '') !== '') {
-            $query->whereAnyLike(['c.title', 'c.excerpt', 'c.blocks'], (string) $args['search']);
+            /*
+             * ARAMA `blocks` SÜTUNUNU TARAMIYOR.
+             *
+             * 0.2.0'da `LIKE '%terim%'` blocks LONGTEXT'i de kapsıyordu. İki
+             * sorun vardı:
+             *
+             *   1. Ham JSON metni arandığı için "type", "data", "paragraph",
+             *      "text", "level" gibi terimler HER kaydın blok anahtarlarıyla
+             *      eşleşiyordu — kullanıcı "type" arayınca tüm site dönüyordu.
+             *   2. Baştan joker olduğu için indeks kullanılamıyor ve LONGTEXT
+             *      taraması sayfalama COUNT(*)'ı yüzünden İKİ kez yapılıyordu.
+             *
+             * Gövde içinde arama gerçekten gerekiyorsa doğru araç FULLTEXT
+             * indeks; Blueprint::fullText() var ama henüz kullanılmıyor. Şu an
+             * başlık ve özet aranıyor, bu da kullanıcının beklediği davranışa
+             * yanlış eşleşmelerden çok daha yakın.
+             */
+            $query->whereAnyLike(['c.title', 'c.excerpt'], (string) $args['search']);
         }
 
         if ((int) ($args['author'] ?? 0) > 0) {
@@ -192,7 +209,15 @@ final class ContentRepository
             $total = count($rows);
             $pages = 1;
         } else {
-            $result = $query->paginate($perPage, $page);
+            /*
+             * Toplam sayım yalnızca gerektiğinde yapılır.
+             *
+             * Sayfalama bağlantısı basmayacak çağrılar (ana sayfa manşeti,
+             * besleme, "popüler yazılar", 404 önerileri) `withTotal => false`
+             * geçebilir; o zaman filtrelenmiş kümenin tamamı sayılmaz.
+             * Varsayılan true — mevcut çağıranların davranışı değişmiyor.
+             */
+            $result = $query->paginate($perPage, $page, (bool) ($args['withTotal'] ?? true));
             $rows   = $result['items'];
             $total  = $result['total'];
             $pages  = $result['pages'];

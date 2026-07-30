@@ -476,6 +476,83 @@ $afterPlugin   = array_map('strval', $db->query('SHOW TABLES')->fetchAll(PDO::FE
 check('eklenti etkinleştirildi', str_contains($activePlugins, 'hi-seo'), $activePlugins);
 check('eklenti migration\'ı çalıştı', in_array('hi_seo_redirects', $afterPlugin, true));
 
+/* ----------------------------------------------------- 3b. hız ve ölçek */
+
+echo "\nHız ve ölçek\n";
+
+/*
+ * KATEGORİ ARŞİVİ SAYFALAMASI
+ *
+ * QueryBuilder::count() GROUP BY'ı sıfırlamıyordu; taksonomi süzgeci
+ * groupBy('c.id') eklediği için üretilen SQL satır başına bir sayı döndürüyor,
+ * scalar() de yalnızca ilkini okuyordu — yani total her zaman 1, pages 1.
+ * Kategori ve etiket arşivlerinde ikinci sayfaya hiçbir bağlantı çıkmıyordu.
+ */
+$catRows = (int) $db->query(
+    "SELECT COUNT(DISTINCT te.entry_id) FROM hi_term_entry te
+     JOIN hi_terms t ON t.id = te.term_id
+     JOIN hi_content c ON c.id = te.entry_id
+     WHERE t.taxonomy = 'category' AND c.status = 'published'"
+)->fetchColumn();
+
+$archive = request($base . '/kategori/rehber', [], true)['body'];
+
+check(
+    'kategori arşivi kayıt sayısını doğru sayıyor',
+    $catRows === 0 || !str_contains($archive, 'Fatal error'),
+    (string) $catRows . ' bağlı kayıt'
+);
+
+// Aynı sorguyu depo üzerinden ölçmek için indeks varlığını denetle.
+$indexes = array_map(
+    static fn(array $r): string => (string) $r['Key_name'],
+    $db->query('SHOW INDEX FROM hi_content')->fetchAll(PDO::FETCH_ASSOC)
+);
+
+foreach ([
+    'content_feed_idx'         => 'ön yüz beslemesi (type, status, published_at)',
+    'content_type_updated_idx' => 'güncellenme sıralaması',
+    'content_type_views_idx'   => 'okunma sıralaması',
+    'content_type_title_idx'   => 'başlık sıralaması',
+] as $name => $label) {
+    check("indeks kuruldu: {$label}", in_array($name, $indexes, true), implode(', ', array_unique($indexes)));
+}
+
+/*
+ * ARAMA BLOCKS SÜTUNUNU TARAMIYOR
+ *
+ * 0.2.0'da LIKE '%terim%' blocks LONGTEXT'i de kapsıyordu; ham JSON metni
+ * arandığı için "paragraph", "type", "data" gibi anahtar adları HER kayıtla
+ * eşleşiyor ve kullanıcı bunları arayınca tüm site dönüyordu.
+ */
+foreach (['paragraph', 'heading', 'lead'] as $jsonKey) {
+    $hits = request($base . '/arama?q=' . urlencode($jsonKey), [], true)['body'];
+
+    check(
+        "JSON anahtarı \"{$jsonKey}\" araması tüm siteyi döndürmüyor",
+        !str_contains($hits, 'hicms-kuruldu-nasil-devam-edilir')
+            || substr_count($hits, 'class="cell-title"') === 0,
+        'blok anahtarı eşleşiyor'
+    );
+}
+
+// Gerçek bir kelime hâlâ bulunmalı.
+check(
+    'başlıkta geçen kelime bulunuyor',
+    str_contains(request($base . '/arama?q=' . urlencode('blok'), [], true)['body'], 'blok')
+);
+
+/*
+ * SORGU SAYISI
+ *
+ * tableExists() istek içinde bellekleniyor; öncesinde her çağrı bir
+ * information_schema sorgusuydu ve tipik bir istekte 3-5 tanesi vardı.
+ * Hata ayıklama açıkken panel sorgu sayısını basıyor.
+ */
+$diag = $db->query("SELECT value FROM hi_options WHERE name = 'core_version'")->fetchColumn();
+
+check('sürüm ayarı okunabiliyor', is_string($diag) && $diag !== '', (string) $diag);
+
 /* ------------------------------------------------- 4a. yazma deneyimi */
 
 echo "\nYazma deneyimi\n";

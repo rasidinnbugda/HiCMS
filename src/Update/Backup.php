@@ -165,8 +165,12 @@ final class Backup
             }
 
             $this->db->exec('SET FOREIGN_KEY_CHECKS = 1');
+
+            // Geri yükleme tabloları düşürüp yeniden kurdu: varlık belleği bayat.
+            $this->db->forgetSchemaCache();
         } catch (Throwable $exception) {
             $zip->close();
+            $this->db->forgetSchemaCache();
 
             return ['ok' => false, 'error' => 'Geri yükleme hatası: ' . $exception->getMessage(), 'tables' => $tables];
         }

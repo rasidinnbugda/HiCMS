@@ -78,12 +78,32 @@ final class QueryBuilder
 
     /**
      * where('status', 'published') veya where('views', '>', 100)
+     *
+     * İKİ ARGÜMANLI BİÇİM AYRIMI: üçüncü argümanın `null` olması "iki argümanlı
+     * çağrı" sayılır. Bu, `where('published_at', '<=', null)` gibi bir çağrının
+     * sessizce `published_at = '<='` üretmesine yol açıyordu — hata değil,
+     * YANLIŞ SONUÇ. Artık üçüncü argümanın verilip verilmediği argüman sayısıyla
+     * ayırt ediliyor; `null` değer bilinçli geçilebiliyor ve `IS NULL`'a çevriliyor.
      */
     public function where(string $column, mixed $operatorOrValue, mixed $value = null): self
     {
-        [$operator, $bound] = $value === null
-            ? ['=', $operatorOrValue]
-            : [(string) $operatorOrValue, $value];
+        $threeArgs = func_num_args() >= 3;
+
+        [$operator, $bound] = $threeArgs
+            ? [(string) $operatorOrValue, $value]
+            : ['=', $operatorOrValue];
+
+        /*
+         * null karşılaştırması SQL'de `= NULL` ile yapılamaz (her zaman NULL
+         * döner, yani hiçbir satır eşleşmez). Doğru biçime çevrilir.
+         */
+        if ($bound === null) {
+            $negate = in_array(strtoupper((string) $operator), ['!=', '<>'], true);
+
+            $this->wheres[] = sprintf('%s IS %sNULL', $this->column($column), $negate ? 'NOT ' : '');
+
+            return $this;
+        }
 
         $allowed = ['=', '!=', '<>', '<', '<=', '>', '>=', 'LIKE', 'NOT LIKE'];
         $operator = strtoupper($operator);
@@ -301,6 +321,29 @@ final class QueryBuilder
         $clone->limit   = null;
         $clone->offset  = null;
 
+        /*
+         * GROUP BY DA SIFIRLANMALI.
+         *
+         * 0.2.0'da sıfırlanmıyordu ve üretilen SQL şöyle oluyordu:
+         *     SELECT COUNT(*) AS aggregate … GROUP BY `c`.`id`
+         * Bu, satır BAŞINA bir sayı döndürüyor; `Connection::scalar()` ise
+         * fetchColumn ile yalnızca İLK grubun sayısını okuyor — yani her zaman 1.
+         *
+         * ContentRepository::query() taksonomi süzgecinde groupBy('c.id')
+         * ekliyor, dolayısıyla KATEGORİ VE ETİKET ARŞİVLERİNDE total=1 ve
+         * pages=1 dönüyordu: sayfalama tek sayfaya çöküyor, ikinci sayfadaki
+         * yazılara hiçbir bağlantıdan ulaşılamıyordu. related() de aynı yoldan
+         * etkileniyordu.
+         *
+         * Gruplu sorguda doğru toplam, grup sayısıdır: DISTINCT ile alınır.
+         */
+        if ($clone->groups !== []) {
+            $distinct = implode(', ', $clone->groups);
+
+            $clone->columns = ['COUNT(DISTINCT ' . $distinct . ') AS aggregate'];
+            $clone->groups  = [];
+        }
+
         return (int) $this->db->scalar($clone->toSql(), $clone->bindings);
     }
 
@@ -336,12 +379,40 @@ final class QueryBuilder
      *
      * @return array{items: list<array<string, mixed>>, total: int, page: int, perPage: int, pages: int}
      */
-    public function paginate(int $perPage, int $page = 1): array
+    public function paginate(int $perPage, int $page = 1, bool $withTotal = true): array
     {
         $perPage = max(1, $perPage);
         $page    = max(1, $page);
-        $total   = $this->count();
-        $pages   = max(1, (int) ceil($total / $perPage));
+
+        /*
+         * TOPLAM SAYIM İSTEĞE BAĞLI.
+         *
+         * 0.2.0'da `paginate()` her çağrıda koşulsuz bir tam COUNT(*)
+         * çalıştırıyordu — sonucu isteyen olmasa bile. Yalnızca birkaç kayıt
+         * çeken yerler tüm filtrelenmiş kümeyi sayıyordu: ana sayfa manşeti
+         * (perPage=1), RSS beslemesi, temanın "popüler yazılar" kutusu
+         * (perPage=4) ve 404 sayfası (perPage=3). Arama yapılıyorsa bu sayım,
+         * blocks LONGTEXT üzerindeki LIKE taramasını İKİNCİ kez çalıştırıyordu.
+         *
+         * $withTotal=false verildiğinde toplam, çekilen sayfadan tahmin edilir:
+         * sayfalama bağlantısı gerekmeyen yerler için yeterli.
+         */
+        if (!$withTotal) {
+            $items = $this->limit($perPage)->offset(($page - 1) * $perPage)->get();
+            $seen  = ($page - 1) * $perPage + count($items);
+
+            return [
+                'items'   => $items,
+                'total'   => $seen,
+                'page'    => $page,
+                'perPage' => $perPage,
+                // Sayfa dolmuşsa devamı olabilir; en az bir sonraki sayfa varsayılır.
+                'pages'   => count($items) === $perPage ? $page + 1 : $page,
+            ];
+        }
+
+        $total = $this->count();
+        $pages = max(1, (int) ceil($total / $perPage));
 
         $items = $this->limit($perPage)->offset(($page - 1) * $perPage)->get();
 
