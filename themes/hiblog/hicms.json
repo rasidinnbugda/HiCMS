@@ -1,0 +1,17 @@
+{
+    "name": "HiBlog",
+    "slug": "hiblog",
+    "version": "1.0.0",
+    "type": "theme",
+    "description": "HiCMS'in varsayılan teması. Sans arayüz + serif okuma gövdesi, tek kolon akış, kart çerçevesi yok. Karanlık mod ve yan sütun desteği içerir.",
+    "author": "HiCMS",
+    "author_url": "https://github.com/rasidinnbugda/HiCMS",
+    "repository": "rasidinnbugda/HiCMS",
+    "license": "GPL-3.0-or-later",
+    "requires": {
+        "hicms": "0.2.0",
+        "php": "8.2"
+    },
+    "tags": ["blog", "editöryal", "serif", "karanlık mod", "yan sütun", "erişilebilir"],
+    "screenshot": "screenshot.svg"
+}

@@ -1,0 +1,40 @@
+# HiCMS
+
+# Yapılandırma — her kurulumda farklıdır, asla depoya girmez.
+/config.php
+
+# Çalışma zamanında üretilen içerik
+/content/*
+!/content/.gitkeep
+!/content/uploads/.gitkeep
+!/content/backups/.gitkeep
+!/content/cache/.gitkeep
+!/content/tmp/.gitkeep
+
+# Üretilen dağıtım paketleri
+/dist/
+
+# Kök dizinde biriken arşiv ve döküm dosyaları
+/*.zip
+/*.sql
+/*.sql.gz
+/*.tar
+/*.log
+
+# Eski HiAdmin şablonu — yeni panel ona bağımlı değil, referans olarak tutulur
+/HiAdmin/
+
+# Bağımlılıklar (şu an kullanılmıyor)
+/vendor/
+/node_modules/
+
+# İşletim sistemi ve düzenleyici artıkları
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+*.sublime-*

@@ -1,0 +1,40 @@
+# HiCMS — Apache yapılandırması
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Alt dizin kurulumlarında bu satırı kurulum yoluna göre güncelleyin:
+    # RewriteBase /hicms/
+
+    # Var olan dosya ve dizinlere dokunma (tema/eklenti varlıkları, yüklemeler).
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Yönetim paneli kendi dosyalarını sunar.
+    RewriteRule ^admin/ - [L]
+
+    # Geri kalan her şeyi ön yüz denetleyicisine yönlendir.
+    RewriteRule ^ index.php [L]
+</IfModule>
+
+# Yapılandırma ve veri dosyalarına doğrudan erişimi engelle.
+<FilesMatch "^(config\.php|config\.sample\.php)$">
+    Require all denied
+</FilesMatch>
+
+<IfModule mod_autoindex.c>
+    Options -Indexes
+</IfModule>
+
+# Varlıkları önbelleğe al.
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css "access plus 1 month"
+    ExpiresByType application/javascript "access plus 1 month"
+    ExpiresByType image/svg+xml "access plus 1 year"
+    ExpiresByType image/webp "access plus 1 year"
+    ExpiresByType image/jpeg "access plus 1 year"
+    ExpiresByType image/png "access plus 1 year"
+    ExpiresByType font/woff2 "access plus 1 year"
+</IfModule>

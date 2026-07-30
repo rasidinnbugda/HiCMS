@@ -1,0 +1,7 @@
+# Bu klasör çalışma zamanında üretilen dosyaları tutar:
+#   options.json   → panelden kaydedilen site ayarları
+#   uploads/       → medya kitaplığına yüklenen dosyalar
+#   cache/         → üretilen önbellek dosyaları
+#
+# Klasörün web sunucusu tarafından yazılabilir olması gerekir (0755).
+# İçeriği sürüm kontrolüne dahil edilmez; bkz. .gitignore

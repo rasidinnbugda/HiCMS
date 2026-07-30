@@ -1,0 +1,17 @@
+{
+    "name": "HiTypes",
+    "slug": "hi-types",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Panelden kod yazmadan içerik türü ve özel alan oluşturun: portfolyo, hizmet, ekip üyesi, etkinlik. Tanımlar çekirdeğin içerik türü API'sine kaydedilir.",
+    "author": "HiCMS",
+    "repository": "rasidinnbugda/hi-types",
+    "license": "GPL-3.0-or-later",
+    "requires": {
+        "hicms": "0.2.0",
+        "php": "8.2"
+    },
+    "tags": ["içerik türü", "özel alan", "koleksiyon"],
+    "class": "HiTypes\\Plugin",
+    "main": "plugin.php"
+}

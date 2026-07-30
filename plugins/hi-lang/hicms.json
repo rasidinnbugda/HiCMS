@@ -1,0 +1,17 @@
+{
+    "name": "HiLang",
+    "slug": "hi-lang",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Aynı içeriğin dil sürümlerini birbirine bağlar: /en/ önekli adresler, hreflang etiketleri ve dil değiştirici bileşen. Arayüz çevirisi çekirdekte hazırdır; bu eklenti içerik çokluluğunu ekler.",
+    "author": "HiCMS",
+    "repository": "rasidinnbugda/hi-lang",
+    "license": "GPL-3.0-or-later",
+    "requires": {
+        "hicms": "0.2.0",
+        "php": "8.2"
+    },
+    "tags": ["çoklu dil", "hreflang", "i18n"],
+    "class": "HiLang\\Plugin",
+    "main": "plugin.php"
+}

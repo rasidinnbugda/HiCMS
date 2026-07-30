@@ -1,0 +1,17 @@
+{
+    "name": "HiMedia",
+    "slug": "hi-media",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Yüklenen görsellerden türev boyutlar ve WebP kopyaları üretir; srcset otomatik dolar. Tamamen isteğe bağlıdır — kapatıldığında çekirdek tek dosyayı kullanmaya döner.",
+    "author": "HiCMS",
+    "repository": "rasidinnbugda/hi-media",
+    "license": "GPL-3.0-or-later",
+    "requires": {
+        "hicms": "0.2.0",
+        "php": "8.2"
+    },
+    "tags": ["medya", "performans", "webp", "srcset"],
+    "class": "HiMedia\\Plugin",
+    "main": "plugin.php"
+}

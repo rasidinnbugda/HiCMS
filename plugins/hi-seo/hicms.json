@@ -1,0 +1,17 @@
+{
+    "name": "HiSEO",
+    "slug": "hi-seo",
+    "version": "1.0.0",
+    "type": "plugin",
+    "description": "Otomatik sitemap.xml ve robots.txt, JSON-LD yapısal veri, paylaşım etiketleri ve 301 yönlendirme yöneticisi.",
+    "author": "HiCMS",
+    "repository": "rasidinnbugda/hi-seo",
+    "license": "GPL-3.0-or-later",
+    "requires": {
+        "hicms": "0.2.0",
+        "php": "8.2"
+    },
+    "tags": ["seo", "sitemap", "json-ld", "yönlendirme"],
+    "class": "HiSEO\\Plugin",
+    "main": "plugin.php"
+}

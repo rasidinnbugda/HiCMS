@@ -1,0 +1,17 @@
+{
+    "name": "HiCMS",
+    "slug": "hicms",
+    "version": "0.2.0",
+    "type": "core",
+    "description": "PHP tabanlı, blok içerikli, tema ve eklenti mimarisiyle genişleyen içerik yönetim sistemi.",
+    "author": "Raşidin Buğda",
+    "repository": "rasidinnbugda/HiCMS",
+    "license": "GPL-3.0-or-later",
+    "requires": {
+        "php": "8.2"
+    },
+    "paths": {
+        "core": ["src", "admin", "index.php", "install.php", "router.php", "hi-cron.php", "hicms.json"],
+        "preserved": ["config.php", "content", "themes", "plugins"]
+    }
+}
