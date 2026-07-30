@@ -99,7 +99,7 @@ HiCMS/
 ├── themes/hiblog/       Varsayılan tema
 ├── plugins/             HiSEO · HiLang · HiTypes · HiForms · HiMedia
 ├── content/             Yüklemeler, yedekler, önbellek (yazılabilir olmalı)
-└── build/               lint.php · smoke.php · make-zip.php
+└── build/               lint.php · smoke.php · dbtest.php · updatetest.php · make-zip.php
 ```
 
 ---
@@ -363,10 +363,45 @@ geçici dosya temizliği.
 ## Geliştirme araçları
 
 ```bash
-php build/lint.php     # sözdizimi + autoloader denetimi (129 dosya)
-php build/smoke.php    # veritabanısız davranış testi (88 denetim)
+php build/lint.php     # sözdizimi + autoloader denetimi (131 dosya)
+php build/smoke.php    # veritabanısız davranış testi (129 denetim)
 php build/make-zip.php # dağıtım paketi üretir ve doğrular
 ```
+
+### Gerçek veritabanına karşı doğrulama
+
+`smoke.php` veritabanına dokunmaz, bu yüzden yalnızca çalışma anında görülen
+hataları (geçersiz SQL, kilitli dosya, oturum akışı) kaçırır. Aşağıdaki iki
+betik kurulumu ve güncellemeyi gerçekten çalıştırır.
+
+Her ikisi de verilen veritabanını **düşürür** ve `config.php` üzerine yazar;
+yalnızca geliştirme ortamında çalıştırın.
+
+```bash
+php -S 127.0.0.1:8130 router.php
+php build/dbtest.php --url=http://127.0.0.1:8130 --user=root --pass=gizli --db=hicms_test
+```
+
+`dbtest.php` (57 denetim): kurulum sihirbazını çalıştırır, 13 çekirdek tablonun
+kurulduğunu doğrular, ön yüzün ve 20 panel sayfasının açıldığını görür, ardından
+içerik oluşturma / düzenleme / silme, terim ekleme, ayar kaydetme, eklenti
+etkinleştirme ve planlı görev çalıştırma işlemlerinin sonucunu doğrudan
+veritabanından okur.
+
+```bash
+php build/make-zip.php
+php -S 127.0.0.1:8180 -t /tmp/hicms-site /tmp/hicms-site/router.php
+php build/updatetest.php --zip=dist/hicms-0.2.0.zip --site=/tmp/hicms-site \
+    --url=http://127.0.0.1:8180 --user=root --pass=gizli --db=hicms_update
+```
+
+`updatetest.php` (21 denetim): paketi temiz bir dizine açıp kurar, kullanıcı
+teması / eklentisi / medyası ekler, sonra **aynı paketi** panelden güncelleme
+olarak uygular. Çekirdeğin yenilendiğini (artık dosya silinir, bozulan varlık
+geri gelir) ve `config.php`, `content/`, `themes/`, `plugins/` içeriğinin
+dokunulmadan kaldığını doğrular. Bu akış `admin/system.php` üzerinden yürür —
+güncelleme kendi çalıştığı dizini yeniden yazdığı için bazı hatalar yalnızca
+burada görünür.
 
 ---
 

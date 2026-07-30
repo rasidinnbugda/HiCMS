@@ -7,6 +7,14 @@ namespace HiCMS\Database;
 /**
  * Tablo tanımı kurucu.
  *
+ * Sütunlar dizge birleştirmeyle değil **yapısal olarak** tutulur (ad, tür,
+ * null'lanabilirlik, varsayılan, açıklama) ve SQL yalnızca `toSql()` anında
+ * üretilir. Bunun sebebi somut bir hata: dizge eklemeli yaklaşımda `boolean()`
+ * gibi kendi varsayılanını uygulayan bir yardımcının ardından `default()`
+ * çağrılınca `DEFAULT 0 DEFAULT 1` gibi geçersiz SQL oluşuyordu. Yapısal tutunca
+ * hangi sırayla çağrıldığından bağımsız olarak her yan tümce en fazla bir kez
+ * basılır.
+ *
  * Yabancı anahtar kısıtı bilinçli olarak kullanılmaz: paylaşımlı hostinglerde
  * eski MySQL sürümleri ve karışık depolama motorları yüzünden migration'lar
  * kırılganlaşıyor. Bütünlük depo (repository) katmanında korunur, hız için
@@ -14,13 +22,16 @@ namespace HiCMS\Database;
  */
 final class Blueprint
 {
-    /** @var list<string> */
+    /**
+     * @var list<array{
+     *     name: string, type: string, nullable: bool, hasDefault: bool,
+     *     default: mixed, comment: string, extra: string
+     * }>
+     */
     private array $columns = [];
 
     /** @var list<string> */
     private array $indexes = [];
-
-    private ?string $current = null;
 
     private string $engine = 'InnoDB';
 
@@ -31,10 +42,7 @@ final class Blueprint
     /** Otomatik artan birincil anahtar. */
     public function id(string $name = 'id'): self
     {
-        $this->columns[] = sprintf('`%s` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY', self::clean($name));
-        $this->current   = null;
-
-        return $this;
+        return $this->add($name, 'INT UNSIGNED', 'AUTO_INCREMENT PRIMARY KEY');
     }
 
     public function string(string $name, int $length = 191): self
@@ -82,9 +90,14 @@ final class Blueprint
         return $this->add($name, 'SMALLINT');
     }
 
+    /**
+     * Bool sütunu. Varsayılan uygulanmaz — çağıran `default()` ile açıkça
+     * belirtir. (Eskiden burada örtük `default(0)` vardı ve ardından gelen
+     * `default()` çağrısı geçersiz SQL üretiyordu.)
+     */
     public function boolean(string $name): self
     {
-        return $this->add($name, 'TINYINT(1)')->default(0);
+        return $this->add($name, 'TINYINT(1)');
     }
 
     public function decimal(string $name, int $precision = 10, int $scale = 2): self
@@ -111,35 +124,47 @@ final class Blueprint
         return $this->add($name, 'VARCHAR(45)');
     }
 
-    /** Son eklenen sütunu NULL kabul eder hale getirir. */
+    /* ---------------------------------------------------------------------
+     * Değiştiriciler — son eklenen sütuna uygulanır, çağrı sırası önemsizdir
+     * ------------------------------------------------------------------ */
+
     public function nullable(bool $nullable = true): self
     {
-        if (!$nullable) {
-            return $this;
+        if ($this->columns !== []) {
+            $this->columns[count($this->columns) - 1]['nullable'] = $nullable;
         }
 
-        return $this->modify(static fn(string $sql): string => str_replace(' NOT NULL', ' NULL', $sql));
+        return $this;
     }
 
+    /**
+     * Varsayılan değer. Aynı sütunda ikinci kez çağrılırsa öncekini **değiştirir**,
+     * yan yana iki DEFAULT yan tümcesi üretmez.
+     */
     public function default(mixed $value): self
     {
-        $literal = match (true) {
-            $value === null    => 'NULL',
-            is_bool($value)    => $value ? '1' : '0',
-            is_int($value),
-            is_float($value)   => (string) $value,
-            default            => "'" . str_replace("'", "''", (string) $value) . "'",
-        };
+        if ($this->columns !== []) {
+            $index = count($this->columns) - 1;
 
-        return $this->modify(static fn(string $sql): string => $sql . ' DEFAULT ' . $literal);
+            $this->columns[$index]['hasDefault'] = true;
+            $this->columns[$index]['default']    = $value;
+        }
+
+        return $this;
     }
 
     public function comment(string $text): self
     {
-        $escaped = str_replace("'", "''", $text);
+        if ($this->columns !== []) {
+            $this->columns[count($this->columns) - 1]['comment'] = $text;
+        }
 
-        return $this->modify(static fn(string $sql): string => $sql . " COMMENT '{$escaped}'");
+        return $this;
     }
+
+    /* ---------------------------------------------------------------------
+     * İndeksler
+     * ------------------------------------------------------------------ */
 
     /**
      * @param string|list<string> $columns
@@ -174,12 +199,16 @@ final class Blueprint
         return $this->addIndex('FULLTEXT', $columns, null);
     }
 
+    /* ---------------------------------------------------------------------
+     * Üretim
+     * ------------------------------------------------------------------ */
+
     /**
-     * CREATE TABLE gövdesini üretir.
+     * CREATE TABLE ifadesini üretir.
      */
     public function toSql(string $table): string
     {
-        $lines = array_merge($this->columns, $this->indexes);
+        $lines = array_merge($this->columnDefinitions(), $this->indexes);
 
         return sprintf(
             "CREATE TABLE `%s` (\n  %s\n) ENGINE=%s DEFAULT CHARSET=%s COLLATE=%s",
@@ -192,13 +221,34 @@ final class Blueprint
     }
 
     /**
-     * ALTER TABLE için sütun tanımlarını döndürür.
+     * Sütun tanımlarını SQL parçası olarak döndürür (ALTER TABLE de kullanır).
      *
      * @return list<string>
      */
     public function columnDefinitions(): array
     {
-        return $this->columns;
+        $definitions = [];
+
+        foreach ($this->columns as $column) {
+            $sql = sprintf('`%s` %s', $column['name'], $column['type']);
+            $sql .= $column['nullable'] ? ' NULL' : ' NOT NULL';
+
+            if ($column['hasDefault']) {
+                $sql .= ' DEFAULT ' . self::literal($column['default']);
+            }
+
+            if ($column['extra'] !== '') {
+                $sql .= ' ' . $column['extra'];
+            }
+
+            if ($column['comment'] !== '') {
+                $sql .= " COMMENT '" . str_replace("'", "''", $column['comment']) . "'";
+            }
+
+            $definitions[] = $sql;
+        }
+
+        return $definitions;
     }
 
     /** @return list<string> */
@@ -207,27 +257,44 @@ final class Blueprint
         return $this->indexes;
     }
 
-    private function add(string $name, string $type): self
+    /**
+     * Tanımlı sütun adları — denetim ve test için.
+     *
+     * @return list<string>
+     */
+    public function columnNames(): array
     {
-        $name = self::clean($name);
+        return array_map(static fn(array $column): string => $column['name'], $this->columns);
+    }
 
-        $this->columns[] = sprintf('`%s` %s NOT NULL', $name, $type);
-        $this->current   = $name;
+    /* ---------------------------------------------------------------------
+     * İç yardımcılar
+     * ------------------------------------------------------------------ */
+
+    private function add(string $name, string $type, string $extra = ''): self
+    {
+        $this->columns[] = [
+            'name'       => self::clean($name),
+            'type'       => $type,
+            'nullable'   => false,
+            'hasDefault' => false,
+            'default'    => null,
+            'comment'    => '',
+            'extra'      => $extra,
+        ];
 
         return $this;
     }
 
-    private function modify(callable $mutator): self
+    private static function literal(mixed $value): string
     {
-        if ($this->columns === []) {
-            return $this;
-        }
-
-        $lastIndex = count($this->columns) - 1;
-
-        $this->columns[$lastIndex] = $mutator($this->columns[$lastIndex]);
-
-        return $this;
+        return match (true) {
+            $value === null  => 'NULL',
+            is_bool($value)  => $value ? '1' : '0',
+            is_int($value),
+            is_float($value) => (string) $value,
+            default          => "'" . str_replace("'", "''", (string) $value) . "'",
+        };
     }
 
     /**

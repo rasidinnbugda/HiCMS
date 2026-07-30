@@ -101,6 +101,143 @@ final class Fs
         return true;
     }
 
+    /** Kilitli dosya yana alınırken kullanılan uzantı. */
+    public const ASIDE_SUFFIX = '.hicms-old';
+
+    /**
+     * Bir dosyanın üzerine yazar; dosya kilitliyse önce yana alır.
+     *
+     * Windows'ta o an çalışmakta olan PHP betiğinin üzerine `copy()` ile
+     * yazılamaz. Ancak dosyayı yeniden adlandırmak (dizin girdisini
+     * değiştirmek) çoğu durumda mümkündür. Bu yüzden kopyalama başarısız
+     * olursa hedef `.hicms-old` olarak yana alınır ve kopyalama yeniden
+     * denenir. Yana alınan dosya silinemezse bırakılır; süpürme işi
+     * `sweepAside()` ve `core.clean_tmp` görevine kalır.
+     */
+    public static function replaceFile(string $source, string $target): bool
+    {
+        if (@copy($source, $target)) {
+            return true;
+        }
+
+        if (!self::ensureDir(dirname($target))) {
+            return false;
+        }
+
+        $aside = $target . self::ASIDE_SUFFIX;
+
+        @unlink($aside);
+
+        if (!@rename($target, $aside)) {
+            return false;
+        }
+
+        if (@copy($source, $target)) {
+            @unlink($aside);   // hâlâ kilitliyse kalır, sorun değil
+
+            return true;
+        }
+
+        // Kopyalama yine olmadıysa özgün dosyayı yerine geri koy.
+        @rename($aside, $target);
+
+        return false;
+    }
+
+    /**
+     * Hedefi kaynakla eşitler: kaynaktaki her şey üzerine yazılır, kaynakta
+     * olmayan girdiler hedeften silinir.
+     *
+     * Güncellemede `deleteDir()` + `copyDir()` ikilisinin yerini alır. O ikili,
+     * silme adımı çalışan betiğe takıldığında dizini yarı boş bırakıp
+     * kopyalamayı hiç çalıştırmıyordu; panelden güncelleme yapıldığında
+     * `admin/` dizini bu yüzden yok oluyordu. Eşitleme dizini hiçbir anda
+     * boşaltmaz.
+     *
+     * Kaynakta olmayan girdilerin silinmesi "elden geldiğince" yapılır ve
+     * dönüş değerini etkilemez — artık bir dosya kalması siteyi bozmaz, ama
+     * güncellemeyi başarısız saymak bozar.
+     */
+    public static function syncDir(string $source, string $target): bool
+    {
+        if (!is_dir($source)) {
+            return false;
+        }
+
+        if (!self::ensureDir($target)) {
+            return false;
+        }
+
+        $expected = [];
+
+        foreach (new FilesystemIterator($source, FilesystemIterator::SKIP_DOTS) as $item) {
+            /** @var \SplFileInfo $item */
+            $name       = $item->getFilename();
+            $expected[] = $name;
+            $child      = $target . '/' . $name;
+
+            if ($item->isDir()) {
+                // Aynı adda dosya varsa yol açılsın diye kaldırılır.
+                if (is_file($child)) {
+                    @unlink($child);
+                }
+
+                if (!self::syncDir($item->getPathname(), $child)) {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (is_dir($child) && !self::deleteDir($child)) {
+                return false;
+            }
+
+            if (!self::replaceFile($item->getPathname(), $child)) {
+                return false;
+            }
+        }
+
+        foreach (new FilesystemIterator($target, FilesystemIterator::SKIP_DOTS) as $item) {
+            /** @var \SplFileInfo $item */
+            $name = $item->getFilename();
+
+            if (in_array($name, $expected, true) || str_ends_with($name, self::ASIDE_SUFFIX)) {
+                continue;
+            }
+
+            $item->isDir()
+                ? self::deleteDir($item->getPathname())
+                : @unlink($item->getPathname());
+        }
+
+        return true;
+    }
+
+    /**
+     * Yana alınmış `.hicms-old` dosyalarını süpürür ve silinen sayısını döndürür.
+     */
+    public static function sweepAside(string $directory): int
+    {
+        if (!is_dir($directory)) {
+            return 0;
+        }
+
+        $removed = 0;
+
+        foreach (new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::CHILD_FIRST
+        ) as $item) {
+            /** @var \SplFileInfo $item */
+            if ($item->isFile() && str_ends_with($item->getFilename(), self::ASIDE_SUFFIX) && @unlink($item->getPathname())) {
+                $removed++;
+            }
+        }
+
+        return $removed;
+    }
+
     /**
      * Dizin altındaki tüm dosyaları göreli yollarıyla listeler.
      *

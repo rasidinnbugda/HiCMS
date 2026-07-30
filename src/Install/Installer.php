@@ -177,60 +177,99 @@ final class Installer
 
         $steps[] = 'config.php oluşturuldu';
 
-        // 5. Çekirdeği yeni yapılandırmayla başlat
-        Kernel::reset();
-        $app = Kernel::boot($this->rootDir, false);
+        /*
+         * Bu noktadan sonrası veritabanına yazar. Buradaki her hata — bağlantı
+         * kopması, yetki eksiği, geçersiz şema — kullanıcıya açık bir mesaj
+         * olarak dönmeli. Yakalanmayan bir istisna boş bir 500 sayfası üretir ve
+         * kullanıcı neyin bozulduğunu göremez; o yüzden tamamı sarmalanmıştır.
+         */
+        try {
+            // 5. Çekirdeği yeni yapılandırmayla başlat
+            Kernel::reset();
+            $app = Kernel::boot($this->rootDir, false);
 
-        // 6. Migration'lar
-        $migration = $app->migrator()->migrate();
+            // 6. Migration'lar
+            $migration = $app->migrator()->migrate();
 
-        if (!$migration['ok']) {
-            return $fail('Veritabanı tabloları oluşturulamadı: ' . $migration['error'], $steps);
+            if (!$migration['ok']) {
+                return $fail('Veritabanı tabloları oluşturulamadı: ' . $migration['error'], $steps);
+            }
+
+            $steps[] = count($migration['applied']) . ' veritabanı adımı uygulandı';
+
+            // 7. Yönetici hesabı
+            $user              = new User();
+            $user->username    = strtolower(trim($admin['username']));
+            $user->email       = strtolower(trim($admin['email']));
+            $user->displayName = trim($admin['name']) !== '' ? trim($admin['name']) : $user->username;
+            $user->role        = 'admin';
+            $user->status      = 'active';
+
+            $created = $app->users()->create($user, $admin['password']);
+
+            if (!$created['ok']) {
+                return $fail('Yönetici hesabı oluşturulamadı: ' . $created['error'], $steps);
+            }
+
+            $steps[] = 'Yönetici hesabı oluşturuldu';
+
+            // 8. Ayarlar ve varsayılan içerik
+            $app->loadExtensions();
+
+            $this->seedOptions($app, $input);
+            $steps[] = 'Site ayarları yazıldı';
+
+            if (!empty($input['demo'])) {
+                $this->seedContent($app, $user);
+                $steps[] = 'Örnek içerik eklendi';
+            } else {
+                $this->seedMinimal($app, $user);
+                $steps[] = 'Temel sayfalar eklendi';
+            }
+
+            $this->seedSchedule($app);
+            $steps[] = 'Planlı görevler kaydedildi';
+
+            $app->audit()->record(
+                action: 'system.install',
+                userId: $user->id,
+                actor: $user->displayName,
+                summary: 'HiCMS ' . Kernel::VERSION . ' kuruldu',
+            );
+        } catch (Throwable $exception) {
+            return $fail(
+                sprintf(
+                    '%s — %s (%s satır %d)',
+                    $this->stageLabel($steps),
+                    $exception->getMessage(),
+                    basename($exception->getFile()),
+                    $exception->getLine()
+                ),
+                $steps
+            );
         }
-
-        $steps[] = count($migration['applied']) . ' veritabanı adımı uygulandı';
-
-        // 7. Yönetici hesabı
-        $user              = new User();
-        $user->username    = strtolower(trim($admin['username']));
-        $user->email       = strtolower(trim($admin['email']));
-        $user->displayName = trim($admin['name']) !== '' ? trim($admin['name']) : $user->username;
-        $user->role        = 'admin';
-        $user->status      = 'active';
-
-        $created = $app->users()->create($user, $admin['password']);
-
-        if (!$created['ok']) {
-            return $fail('Yönetici hesabı oluşturulamadı: ' . $created['error'], $steps);
-        }
-
-        $steps[] = 'Yönetici hesabı oluşturuldu';
-
-        // 8. Ayarlar ve varsayılan içerik
-        $app->loadExtensions();
-
-        $this->seedOptions($app, $input);
-        $steps[] = 'Site ayarları yazıldı';
-
-        if (!empty($input['demo'])) {
-            $this->seedContent($app, $user);
-            $steps[] = 'Örnek içerik eklendi';
-        } else {
-            $this->seedMinimal($app, $user);
-            $steps[] = 'Temel sayfalar eklendi';
-        }
-
-        $this->seedSchedule($app);
-        $steps[] = 'Planlı görevler kaydedildi';
-
-        $app->audit()->record(
-            action: 'system.install',
-            userId: $user->id,
-            actor: $user->displayName,
-            summary: 'HiCMS ' . Kernel::VERSION . ' kuruldu',
-        );
 
         return ['ok' => true, 'error' => '', 'steps' => $steps, 'adminUrl' => $app->urls()->admin()];
+    }
+
+    /**
+     * Hangi aşamada kaldığımızı mesajın başına yazar — kullanıcı nereye
+     * bakacağını bilsin.
+     *
+     * @param list<string> $steps
+     */
+    private function stageLabel(array $steps): string
+    {
+        $last = end($steps);
+
+        return match (true) {
+            $last === false                                => 'Kurulum başlarken hata',
+            str_contains((string) $last, 'config.php')     => 'Veritabanı tabloları kurulurken hata',
+            str_contains((string) $last, 'adımı')          => 'Yönetici hesabı oluşturulurken hata',
+            str_contains((string) $last, 'Yönetici')       => 'Site ayarları yazılırken hata',
+            str_contains((string) $last, 'ayarları')       => 'Varsayılan içerik eklenirken hata',
+            default                                        => 'Kurulum tamamlanırken hata',
+        };
     }
 
     /**
@@ -326,8 +365,16 @@ final class Installer
 
         $app->menus()->assign(['primary' => 'ana-menu', 'footer' => 'alt-menu']);
 
+        /*
+         * Alan kimlikleri tema tarafından belirlenir; hiblog `sidebar` ve
+         * `footer` kaydeder. Burada var olmayan bir kimliğe yazılırsa
+         * bileşenler ne panelde ne sitede görünür.
+         */
+        $areas  = array_keys($app->widgets()->areas());
+        $target = $app->widgets()->hasArea('sidebar') ? 'sidebar' : (string) ($areas[0] ?? 'sidebar');
+
         $app->options()->set('widgets', [
-            'sidebar-main' => [
+            $target => [
                 ['type' => 'search', 'title' => 'Arama', 'settings' => ['placeholder' => 'Yazılarda ara…']],
                 ['type' => 'recent', 'title' => 'Son Yazılar', 'settings' => ['count' => 4, 'numbered' => true]],
                 ['type' => 'terms', 'title' => 'Kategoriler', 'settings' => ['taxonomy' => 'category', 'show_count' => true]],

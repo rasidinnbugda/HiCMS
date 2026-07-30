@@ -23,6 +23,46 @@ if (version_compare(PHP_VERSION, '8.2.0', '<')) {
 require __DIR__ . '/src/Autoloader.php';
 HiCMS\Autoloader::register(__DIR__ . '/src');
 
+/*
+ * Kurulum sırasında hatalar HER ZAMAN görünür olmalı. Aksi hâlde bir sorun
+ * çıktığında kullanıcı boş bir 500 sayfası görür ve neyin bozulduğunu
+ * anlayamaz. `Kernel::boot()` yapılandırmayı okuduğunda display_errors'ı
+ * kendi ayarına göre değiştirdiği için bu değerler kurulum akışının içinde
+ * yeniden uygulanır (bkz. `showErrors()`).
+ */
+$showErrors = static function (): void {
+    error_reporting(E_ALL);
+    ini_set('display_errors', '1');
+    ini_set('display_startup_errors', '1');
+};
+
+$showErrors();
+
+// Kurulum yarıda ölürse sebebi ekrana yaz — sessiz 500 bırakma.
+register_shutdown_function(static function (): void {
+    $error = error_get_last();
+
+    if ($error === null || !in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+        return;
+    }
+
+    if (!headers_sent()) {
+        http_response_code(500);
+        header('Content-Type: text/html; charset=UTF-8');
+    }
+
+    printf(
+        '<div style="font:14px/1.6 system-ui,sans-serif;max-width:660px;margin:40px auto;padding:16px 18px;'
+        . 'border:1px solid #f0c8c4;border-radius:8px;background:#fdf0ef;color:#b3261e">'
+        . '<strong style="display:block;margin-bottom:6px">Kurulum beklenmedik biçimde durdu</strong>'
+        . '<p style="margin:0 0 8px">%s</p>'
+        . '<p style="margin:0;font:12px/1.5 ui-monospace,monospace;color:#7a1f19">%s satır %d</p></div>',
+        htmlspecialchars($error['message'], ENT_QUOTES, 'UTF-8'),
+        htmlspecialchars(basename($error['file']), ENT_QUOTES, 'UTF-8'),
+        (int) $error['line']
+    );
+});
+
 $installer = new Installer(__DIR__);
 
 // Kurulu sistemde sihirbaz kapalıdır.
@@ -97,7 +137,8 @@ if ($action === 'test-db') {
 }
 
 if ($action === 'install') {
-    $result = $installer->install([
+    try {
+        $result = $installer->install([
         'db' => [
             'host' => $form['db_host'], 'port' => (int) $form['db_port'], 'name' => $form['db_name'],
             'user' => $form['db_user'], 'pass' => $form['db_pass'], 'prefix' => $form['db_prefix'],
@@ -116,8 +157,24 @@ if ($action === 'install') {
             'password' => $form['password'],
             'name'     => $form['name'],
         ],
-        'demo' => $form['demo'],
-    ]);
+            'demo' => $form['demo'],
+        ]);
+    } catch (Throwable $exception) {
+        // Buraya düşmemesi gerekir; düşerse sebebini gizlemeyelim.
+        $result = [
+            'ok'    => false,
+            'steps' => [],
+            'error' => sprintf(
+                '%s (%s satır %d)',
+                $exception->getMessage(),
+                basename($exception->getFile()),
+                $exception->getLine()
+            ),
+        ];
+    }
+
+    // Kernel yapılandırmayı okurken display_errors'ı kapatmış olabilir.
+    $showErrors();
 
     if ($result['ok']) {
         $steps    = $result['steps'];

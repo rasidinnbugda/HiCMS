@@ -207,9 +207,17 @@ final class Updater
                 }
             }
 
+            /*
+             * Yol, denemeden ÖNCE geri alma listesine girer. Aksi hâlde yarı
+             * yolda kalan yol listede olmadığı için geri yüklenmez ve — panelden
+             * güncellemede `admin/` örneğinde olduğu gibi — yok edilmiş bir
+             * dizinle baş başa kalınır.
+             */
+            $replaced[] = $path;
+
             $ok = is_dir($source)
-                ? (Fs::deleteDir($target) && Fs::copyDir($source, $target))
-                : @copy($source, $target);
+                ? Fs::syncDir($source, $target)
+                : Fs::replaceFile($source, $target);
 
             if (!$ok) {
                 $this->rollback($rollbackDir, $replaced);
@@ -218,11 +226,14 @@ final class Updater
 
                 return $this->failure(Str::format('%s güncellenemedi, değişiklikler geri alındı.', $path));
             }
-
-            $replaced[] = $path;
         }
 
         Fs::deleteDir($workDir);
+
+        // Kilitli dosyalar yana alınmış olabilir; artıkları temizle.
+        foreach (self::CORE_PATHS as $path) {
+            Fs::sweepAside($this->rootDir . '/' . $path);
+        }
 
         // Şema güncellemeleri.
         $migrations = [];
@@ -347,11 +358,12 @@ final class Updater
                 continue;
             }
 
+            // Geri alma da eşitlemeyle yapılır: silme adımı çalışan betiğe
+            // takılıp dizini boş bırakırsa geri alma da işe yaramaz.
             if (is_dir($source)) {
-                Fs::deleteDir($target);
-                Fs::copyDir($source, $target);
+                Fs::syncDir($source, $target);
             } else {
-                @copy($source, $target);
+                Fs::replaceFile($source, $target);
             }
         }
     }

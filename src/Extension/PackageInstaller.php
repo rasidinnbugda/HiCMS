@@ -137,19 +137,17 @@ final class PackageInstaller
                 return $fail('Mevcut kurulum yedeklenemedi, güncelleme iptal edildi.');
             }
 
-            if (!Fs::deleteDir($target)) {
-                Fs::deleteDir($workDir);
-                Fs::deleteDir($backupDir);
-
-                return $fail('Mevcut klasör silinemedi. Dosya izinlerini kontrol edin.');
-            }
         }
 
-        if (!Fs::copyDir($packageDir, $target)) {
-            // Geri al.
+        /*
+         * Hedef önce silinip sonra kopyalanmaz. Silme yarı yolda kalırsa —
+         * bir dosya kilitli, bir alt dizin salt okunur — klasör yok edilmiş
+         * olur ve eski sürüm geri getirilmez. Eşitleme kaynağı üzerine yazar,
+         * artakalan dosyaları temizler ve klasörü hiçbir anda boşaltmaz.
+         */
+        if (!Fs::syncDir($packageDir, $target)) {
             if ($backupDir !== '' && is_dir($backupDir)) {
-                Fs::deleteDir($target);
-                Fs::copyDir($backupDir, $target);
+                Fs::syncDir($backupDir, $target);
                 Fs::deleteDir($backupDir);
             }
 

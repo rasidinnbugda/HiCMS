@@ -110,15 +110,26 @@ final class Migrator
      */
     public function migrate(): array
     {
-        $this->prepare();
+        // Kayıt tablosunun kurulumu da başarısız olabilir (bağlantı, yetki,
+        // depolama motoru); hata mesajı kaybolmasın diye burada yakalanır.
+        try {
+            $this->prepare();
 
-        $pending = $this->pending();
+            $pending = $this->pending();
 
-        if ($pending === []) {
-            return ['ok' => true, 'applied' => [], 'error' => ''];
+            if ($pending === []) {
+                return ['ok' => true, 'applied' => [], 'error' => ''];
+            }
+
+            $batch = (int) ($this->db->builder('migrations')->max('batch') ?? 0) + 1;
+        } catch (Throwable $exception) {
+            return [
+                'ok'      => false,
+                'applied' => [],
+                'error'   => 'Migration tablosu hazırlanamadı: ' . $exception->getMessage(),
+            ];
         }
 
-        $batch   = (int) ($this->db->builder('migrations')->max('batch') ?? 0) + 1;
         $applied = [];
 
         foreach ($pending as $migration) {

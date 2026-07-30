@@ -10,8 +10,41 @@ namespace HiCMS\Database;
  */
 final class Schema
 {
+    /**
+     * Kuru çalıştırma: SQL üretilir ama çalıştırılmaz, veritabanına hiç
+     * dokunulmaz. Migration'ları veritabanı olmadan doğrulamak ve panelde
+     * "ne yapılacak" önizlemesi göstermek için kullanılır.
+     */
+    private bool $dryRun = false;
+
+    /** @var array<string, string> tablo → üretilen SQL */
+    private array $captured = [];
+
     public function __construct(private readonly Connection $db)
     {
+    }
+
+    public function beginDryRun(): void
+    {
+        $this->dryRun   = true;
+        $this->captured = [];
+    }
+
+    /**
+     * Kuru çalıştırmayı bitirir ve toplanan SQL'i döndürür.
+     *
+     * @return array<string, string>
+     */
+    public function endDryRun(): array
+    {
+        $this->dryRun = false;
+
+        return $this->captured;
+    }
+
+    public function isDryRun(): bool
+    {
+        return $this->dryRun;
     }
 
     /**
@@ -19,6 +52,16 @@ final class Schema
      */
     public function create(string $table, callable $definition): void
     {
+        // Kuru çalıştırmada tablo varlığı sorgulanmaz — bağlantı gerekmez.
+        if ($this->dryRun) {
+            $blueprint = new Blueprint();
+            $definition($blueprint);
+
+            $this->captured[$table] = $blueprint->toSql($this->db->t($table));
+
+            return;
+        }
+
         if ($this->hasTable($table)) {
             return;
         }
@@ -31,6 +74,10 @@ final class Schema
 
     public function dropIfExists(string $table): void
     {
+        if ($this->dryRun) {
+            return;
+        }
+
         $this->db->exec(sprintf('DROP TABLE IF EXISTS `%s`', $this->db->t($table)));
     }
 
@@ -49,6 +96,21 @@ final class Schema
      */
     public function addColumns(string $table, callable $definition): void
     {
+        if ($this->dryRun) {
+            $blueprint = new Blueprint();
+            $definition($blueprint);
+
+            $this->captured[$table . ':alter'] = implode(
+                "\n",
+                array_map(
+                    fn(string $sql): string => sprintf('ALTER TABLE `%s` ADD COLUMN %s', $this->db->t($table), $sql),
+                    $blueprint->columnDefinitions()
+                )
+            );
+
+            return;
+        }
+
         if (!$this->hasTable($table)) {
             return;
         }
@@ -89,7 +151,7 @@ final class Schema
      */
     public function addIndex(string $table, array|string $columns, bool $unique = false, ?string $name = null): void
     {
-        if (!$this->hasTable($table)) {
+        if ($this->dryRun || !$this->hasTable($table)) {
             return;
         }
 
@@ -105,12 +167,8 @@ final class Schema
             $name ?? implode('_', $clean) . '_idx'
         );
 
-        $existing = $this->db->select(sprintf('SHOW INDEX FROM `%s`', $this->db->t($table)));
-
-        foreach ($existing as $row) {
-            if (($row['Key_name'] ?? '') === $indexName) {
-                return;
-            }
+        if (in_array($indexName, $this->db->indexNames($table), true)) {
+            return;
         }
 
         $quoted = implode(', ', array_map(static fn(string $c): string => "`{$c}`", $clean));

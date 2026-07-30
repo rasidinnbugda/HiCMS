@@ -202,6 +202,12 @@ final class Kernel
                     is_dir($item) ? Support\Fs::deleteDir($item) : @unlink($item);
                 }
             }
+
+            // Güncellemede kilitli olduğu için yana alınan dosyalar; artık
+            // serbest kalmışlarsa silinir.
+            foreach (['src', 'admin'] as $directory) {
+                Support\Fs::sweepAside($this->rootDir . '/' . $directory);
+            }
         });
     }
 

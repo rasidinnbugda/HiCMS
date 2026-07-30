@@ -318,21 +318,56 @@ final class Connection
         }
     }
 
+    /*
+     * Şema sorguları information_schema üzerinden yapılır.
+     *
+     * MySQL ve MariaDB, SHOW deyimlerinde bağlı parametre kabul etmez:
+     * `SHOW TABLES LIKE ?` hazırlanırken 1064 sözdizimi hatası verir. Tablo
+     * adını SQL'e gömmek ise enjeksiyon yüzeyi açar. information_schema normal
+     * bir tablo olduğu için hem parametre bağlanabilir hem tam eşleşme
+     * yapılabilir — LIKE joker karakterleri (`_`) yanlış tabloyu bulmaz.
+     */
+
     public function tableExists(string $table): bool
     {
-        $found = $this->scalar('SHOW TABLES LIKE ?', [$this->t($table)]);
+        $found = $this->scalar(
+            'SELECT 1 FROM information_schema.TABLES'
+            . ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1',
+            [$this->t($table)]
+        );
 
         return $found !== null;
     }
 
     public function columnExists(string $table, string $column): bool
     {
-        $rows = $this->select(
-            sprintf('SHOW COLUMNS FROM `%s` LIKE ?', $this->t($table)),
-            [$column]
+        $found = $this->scalar(
+            'SELECT 1 FROM information_schema.COLUMNS'
+            . ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1',
+            [$this->t($table), $column]
         );
 
-        return $rows !== [];
+        return $found !== null;
+    }
+
+    /**
+     * Bir tablodaki indeks adlarını döndürür.
+     *
+     * @return list<string>
+     */
+    public function indexNames(string $table): array
+    {
+        return array_map(
+            'strval',
+            array_column(
+                $this->select(
+                    'SELECT DISTINCT INDEX_NAME FROM information_schema.STATISTICS'
+                    . ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+                    [$this->t($table)]
+                ),
+                'INDEX_NAME'
+            )
+        );
     }
 
     /**
@@ -342,16 +377,18 @@ final class Connection
      */
     public function ownTables(): array
     {
-        $rows   = $this->select('SHOW TABLES LIKE ?', [$this->prefix() . '%']);
-        $tables = [];
+        // Ön ekte alt çizgi bulunabilir; LIKE için kaçırılmalı yoksa `hi_`
+        // deseni `hiX` ile de eşleşir.
+        $pattern = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $this->prefix());
 
-        foreach ($rows as $row) {
-            $tables[] = (string) reset($row);
-        }
+        $rows = $this->select(
+            'SELECT TABLE_NAME FROM information_schema.TABLES'
+            . ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE ?'
+            . ' ORDER BY TABLE_NAME',
+            [$pattern . '%']
+        );
 
-        sort($tables);
-
-        return $tables;
+        return array_map('strval', array_column($rows, 'TABLE_NAME'));
     }
 
     public function queryCount(): int

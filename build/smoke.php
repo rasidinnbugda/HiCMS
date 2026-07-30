@@ -26,6 +26,7 @@ use HiCMS\Events\Dispatcher;
 use HiCMS\Events\Render\BlockRendering;
 use HiCMS\Http\Request;
 use HiCMS\Http\Router;
+use HiCMS\Install\Installer;
 use HiCMS\Install\Requirements;
 use HiCMS\Kernel;
 use HiCMS\Model\Entry;
@@ -268,18 +269,124 @@ $blueprint->key('slug');
 $blueprint->string('title', 255);
 $blueprint->longText('blocks')->nullable();
 $blueprint->boolean('featured')->default(0);
+$blueprint->boolean('comments_open')->default(1);
 $blueprint->timestamp('published_at')->nullable();
+$blueprint->integer('views', true)->default(0);
 $blueprint->unique(['slug'], 'slug_unique');
 $blueprint->index('featured');
 
 $sql = $blueprint->toSql('hi_content');
 
 check('CREATE TABLE üretilir', str_starts_with($sql, 'CREATE TABLE `hi_content`'));
-check('Birincil anahtar', str_contains($sql, 'AUTO_INCREMENT PRIMARY KEY'));
-check('Nullable sütun', str_contains($sql, '`published_at` DATETIME NULL'));
-check('Varsayılan değer', str_contains($sql, '`featured` TINYINT(1) NOT NULL DEFAULT 0'));
+check('Birincil anahtar', str_contains($sql, '`id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY'));
 check('Tekil indeks', str_contains($sql, 'UNIQUE KEY `slug_unique` (`slug`)'));
 check('InnoDB ve utf8mb4', str_contains($sql, 'ENGINE=InnoDB') && str_contains($sql, 'utf8mb4'));
+
+/*
+ * Sütun tanımları TAM eşleşmeyle denetlenir. Daha önce burada `str_contains`
+ * ile parça araması yapılıyordu ve `DEFAULT 0 DEFAULT 1` gibi geçersiz SQL
+ * testten geçiyordu — migration'ların hiç çalışmamasına yol açan hata buydu.
+ */
+$definitions = [];
+
+foreach ($blueprint->columnDefinitions() as $definition) {
+    preg_match('/^`([^`]+)`/', $definition, $m);
+    $definitions[$m[1]] = $definition;
+}
+
+$expected = [
+    'id'            => '`id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY',
+    'slug'          => '`slug` VARCHAR(191) NOT NULL',
+    'title'         => '`title` VARCHAR(255) NOT NULL',
+    'blocks'        => '`blocks` LONGTEXT NULL',
+    'featured'      => '`featured` TINYINT(1) NOT NULL DEFAULT 0',
+    'comments_open' => '`comments_open` TINYINT(1) NOT NULL DEFAULT 1',
+    'published_at'  => '`published_at` DATETIME NULL',
+    'views'         => '`views` INT UNSIGNED NOT NULL DEFAULT 0',
+];
+
+foreach ($expected as $column => $want) {
+    check(
+        'Sütun tanımı tam eşleşir: ' . $column,
+        ($definitions[$column] ?? '') === $want,
+        'üretilen: ' . ($definitions[$column] ?? 'yok')
+    );
+}
+
+// Hiçbir sütunda yan tümce tekrarı olmamalı.
+foreach ($definitions as $column => $definition) {
+    check(
+        'Tek DEFAULT yan tümcesi: ' . $column,
+        substr_count($definition, 'DEFAULT') <= 1,
+        $definition
+    );
+    check(
+        'NULL/NOT NULL çakışması yok: ' . $column,
+        substr_count($definition, ' NULL') === 1,
+        $definition
+    );
+}
+
+// Çağrı sırası sonucu değiştirmemeli.
+$orderA = (new Blueprint())->boolean('x')->default(1)->nullable();
+$orderB = (new Blueprint())->boolean('x')->nullable()->default(1);
+
+check('Değiştirici sırası sonucu değiştirmez',
+    $orderA->columnDefinitions() === $orderB->columnDefinitions(),
+    implode(' | ', array_merge($orderA->columnDefinitions(), $orderB->columnDefinitions())));
+
+// Aynı sütunda ikinci default öncekini değiştirir.
+$replaced = (new Blueprint())->integer('n')->default(1)->default(5);
+
+check('İkinci default öncekini değiştirir',
+    $replaced->columnDefinitions() === ['`n` INT NOT NULL DEFAULT 5'],
+    implode('', $replaced->columnDefinitions()));
+
+/*
+ * Gerçek migration dosyalarının ürettiği SQL de denetlenir: tablo başına en
+ * fazla bir DEFAULT ve dengeli parantez. Bu, migration'ları veritabanı olmadan
+ * doğrulamanın tek yolu.
+ */
+$migrationSql = [];
+$connection   = new HiCMS\Database\Connection(['prefix' => 'hi_']);
+$schema       = new HiCMS\Database\Schema($connection);
+
+$schema->beginDryRun();
+
+$migrationFiles = array_merge(
+    glob($root . '/src/Database/migrations/*.php') ?: [],
+    glob($root . '/plugins/*/migrations/*.php') ?: []
+);
+
+foreach ($migrationFiles as $file) {
+    $migration = require $file;
+    $migration->up($schema, $connection);
+}
+
+$generated = $schema->endDryRun();
+
+foreach ($generated as $table => $createSql) {
+    $lines = array_filter(
+        array_map('trim', explode("\n", $createSql)),
+        static fn(string $line): bool => str_starts_with($line, '`')
+    );
+
+    $clean = true;
+
+    foreach ($lines as $line) {
+        if (substr_count($line, 'DEFAULT') > 1 || substr_count($line, ' NULL') > 1) {
+            $clean = false;
+            $migrationSql[] = $table . ': ' . rtrim($line, ',');
+        }
+    }
+
+    check('Migration SQL geçerli: ' . $table, $clean, implode(' / ', $migrationSql));
+}
+
+check('Tüm migration tabloları üretildi', count($generated) >= 12, (string) count($generated));
+check('Eklenti migration\'ları da denetlendi',
+    array_key_exists('seo_redirects', $generated) && array_key_exists('form_submissions', $generated),
+    implode(',', array_keys($generated)));
 
 /* -------------------------------------------------------------------------
  * 7. Önyükleme (yapılandırma yok)
@@ -296,7 +403,55 @@ $app = Kernel::boot($root, false);
 
 check('Çekirdek başlar', $app instanceof Kernel);
 check('Sürüm okunur', Kernel::VERSION !== '');
-check('Yapılandırma yoksa kurulu sayılmaz', !$app->isInstalled());
+
+/*
+ * "Kurulu değil" durumu kök dizindeki config.php'nin yokluğuna bakılarak
+ * denetlenirse, geliştirme makinesinde gerçek bir kurulum varken test boşuna
+ * düşer. O yüzden yapılandırması olmayan geçici bir dizin kullanılır.
+ */
+$emptyRoot = sys_get_temp_dir() . '/hicms-bos-' . bin2hex(random_bytes(4));
+
+check(
+    'Yapılandırma yoksa kurulu sayılmaz',
+    !(new Installer($emptyRoot))->isInstalled(),
+    $emptyRoot
+);
+
+/*
+ * MySQL ve MariaDB, SHOW / DESCRIBE deyimlerinde bağlı parametre kabul etmez;
+ * hazırlanan `SHOW TABLES LIKE ?` çalışma anında 1064 verir ve bu ancak gerçek
+ * bir veritabanıyla görülür. Aşağıdaki denetim o hatayı kaynak düzeyinde,
+ * veritabanı olmadan yakalar.
+ */
+$placeholderInShow = [];
+$sourceFiles       = [];
+
+foreach (['src', 'admin', 'plugins', 'themes'] as $directory) {
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($root . '/' . $directory, FilesystemIterator::SKIP_DOTS)
+    );
+
+    foreach ($iterator as $item) {
+        if ($item->isFile() && $item->getExtension() === 'php') {
+            $sourceFiles[] = $item->getPathname();
+        }
+    }
+}
+
+foreach ($sourceFiles as $file) {
+    $source = (string) file_get_contents($file);
+
+    if (preg_match('~[\'"]\s*(SHOW|DESCRIBE|EXPLAIN)\s[^\'"]*\?~i', $source, $hit) === 1) {
+        $placeholderInShow[] = str_replace($root . DIRECTORY_SEPARATOR, '', $file) . ': ' . trim($hit[0]);
+    }
+}
+
+check(
+    'SHOW/DESCRIBE deyimlerinde bağlı parametre yok',
+    $placeholderInShow === [],
+    implode(' | ', $placeholderInShow)
+);
+
 check('Olay dağıtıcısı hazır', $app->events() instanceof Dispatcher);
 check('Blok kaydı tembel kurulur', $app->blocks() instanceof BlockRegistry);
 check('URL üretici çalışır', str_starts_with($app->urls()->to('hakkinda'), 'http'),
