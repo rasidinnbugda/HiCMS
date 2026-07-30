@@ -244,7 +244,19 @@ final class Kernel
 
         $c->singleton('events', static fn(): Dispatcher => new Dispatcher());
 
-        $c->singleton('request', fn(): Request => Request::capture($this->baseUrlPath()));
+        $c->singleton('request', function (): Request {
+            $request = Request::capture($this->baseUrlPath());
+
+            /*
+             * Vekil başlıklarına yalnızca bildirilen adreslerden güvenilir.
+             * Varsayılan boş: hiçbir başlığa güvenilmez, REMOTE_ADDR kullanılır.
+             * Cloudflare ya da nginx arkasındaysanız config.php'ye ekleyin:
+             *     'trusted_proxies' => ['10.0.0.1', '172.16.0.0/12'],
+             */
+            $request->trustProxies((array) $this->config->get('trusted_proxies', []));
+
+            return $request;
+        });
 
         $c->singleton('urls', fn(Container $c): Url => new Url(
             (string) $this->config->get('url', ''),

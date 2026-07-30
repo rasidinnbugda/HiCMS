@@ -140,24 +140,113 @@ final class Request
         return is_array($file) ? $file : null;
     }
 
+    /**
+     * Güvenilen vekil adresleri. Boşsa hiçbir vekil başlığına güvenilmez.
+     *
+     * @var list<string>
+     */
+    private array $trustedProxies = [];
+
+    /**
+     * Hangi vekillerin başlıklarına güvenileceğini bildirir.
+     *
+     * `config.php` içindeki `trusted_proxies` dizisinden gelir. Değer tam IP
+     * ya da CIDR olabilir: `['10.0.0.1', '172.16.0.0/12']`.
+     *
+     * @param list<string> $proxies
+     */
+    public function trustProxies(array $proxies): void
+    {
+        $this->trustedProxies = array_values(array_filter(array_map('strval', $proxies)));
+    }
+
+    /**
+     * İstemci IP'si.
+     *
+     * VEKİL BAŞLIKLARINA KOŞULSUZ GÜVENİLMEZ.
+     *
+     * 0.2.0 `HTTP_CF_CONNECTING_IP` ve `HTTP_X_FORWARDED_FOR` başlıklarını
+     * sırayla deniyor ve ilk geçerli IP'yi döndürüyordu. Bu başlıkları HERHANGİ
+     * bir istemci gönderebilir; sonuç iki gerçek açıktı:
+     *
+     *   1. Giriş oran sınırlaması tamamen atlanabiliyordu — her istekte farklı
+     *      bir `X-Forwarded-For` göndermek yeterli, çünkü sınırlama IP'ye
+     *      bakıyor ve her seferinde yeni bir "IP" görüyor.
+     *   2. Denetim günlüğü sahte adreslerle kirletilebiliyordu; olay incelemesi
+     *      yanlış yere bakar.
+     *
+     * Artık başlık YALNIZCA isteğin gerçekten güvenilen bir vekilden gelmesi
+     * hâlinde okunur. `REMOTE_ADDR` taklit edilemez: TCP el sıkışmasından gelir.
+     *
+     * Güvenilen vekil bildirilmemişse (varsayılan) `REMOTE_ADDR` kullanılır.
+     * Ters vekil arkasında bu, tüm ziyaretçilerin aynı adresten görünmesi
+     * demektir — bu yüzden giriş sınırlaması IP'ye DEĞİL kullanıcı adına
+     * dayanmak zorunda (bkz. Auth::throttleSeconds()).
+     */
     public function ip(): string
     {
-        // Ters vekil arkasındaysa gerçek IP başlıkta olabilir; yalnızca ilk değeri al.
-        foreach (['HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR', 'REMOTE_ADDR'] as $key) {
-            $value = $this->server[$key] ?? '';
+        $remote = trim((string) ($this->server['REMOTE_ADDR'] ?? ''));
 
-            if ($value === '') {
-                continue;
-            }
+        if ($remote !== '' && $this->isTrustedProxy($remote)) {
+            foreach (['HTTP_CF_CONNECTING_IP', 'HTTP_X_FORWARDED_FOR'] as $key) {
+                $value = (string) ($this->server[$key] ?? '');
 
-            $candidate = trim(explode(',', $value)[0]);
+                if ($value === '') {
+                    continue;
+                }
 
-            if (filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
-                return $candidate;
+                // XFF zinciri "istemci, vekil1, vekil2" sırasında: ilki istemci.
+                $candidate = trim(explode(',', $value)[0]);
+
+                if (filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
+                    return $candidate;
+                }
             }
         }
 
-        return '0.0.0.0';
+        return filter_var($remote, FILTER_VALIDATE_IP) !== false ? $remote : '0.0.0.0';
+    }
+
+    private function isTrustedProxy(string $ip): bool
+    {
+        foreach ($this->trustedProxies as $trusted) {
+            if ($trusted === $ip) {
+                return true;
+            }
+
+            if (str_contains($trusted, '/') && self::inCidr($ip, $trusted)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** IPv4 CIDR eşleşmesi. IPv6 için yalnızca tam eşleşme desteklenir. */
+    private static function inCidr(string $ip, string $cidr): bool
+    {
+        [$subnet, $bits] = array_pad(explode('/', $cidr, 2), 2, '32');
+
+        $ipLong     = ip2long($ip);
+        $subnetLong = ip2long($subnet);
+
+        if ($ipLong === false || $subnetLong === false) {
+            return false;
+        }
+
+        $bits = (int) $bits;
+
+        if ($bits < 0 || $bits > 32) {
+            return false;
+        }
+
+        if ($bits === 0) {
+            return true;
+        }
+
+        $mask = -1 << (32 - $bits);
+
+        return ($ipLong & $mask) === ($subnetLong & $mask);
     }
 
     public function userAgent(): string

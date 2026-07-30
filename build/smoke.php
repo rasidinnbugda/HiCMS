@@ -585,6 +585,66 @@ $owners->emit('test.kanca');
 check('b sökülünce çekirdek yine kalır', $trace === ['çekirdek'], implode(',', $trace));
 
 /* -------------------------------------------------------------------------
+ * 6bb. Vekil başlığı güveni
+ * -------------------------------------------------------------------------
+ * 0.2.0 X-Forwarded-For ve CF-Connecting-IP başlıklarına KOŞULSUZ güveniyordu.
+ * Herhangi bir istemci bunları gönderebildiği için giriş oran sınırlaması her
+ * istekte farklı bir "IP" gösterilerek tamamen atlanabiliyor ve denetim günlüğü
+ * sahte adreslerle kirletilebiliyordu.
+ * ---------------------------------------------------------------------- */
+
+echo "\nVekil başlığı güveni\n";
+
+$makeRequest = static function (array $server): Request {
+    return new Request('GET', '/', [], [], [], $server, []);
+};
+
+$spoofed = [
+    'REMOTE_ADDR'          => '203.0.113.9',
+    'HTTP_X_FORWARDED_FOR' => '1.2.3.4',
+    'HTTP_CF_CONNECTING_IP' => '5.6.7.8',
+];
+
+$untrusted = $makeRequest($spoofed);
+
+check('Güvenilmeyen kaynakta XFF yok sayılır', $untrusted->ip() === '203.0.113.9', $untrusted->ip());
+
+$trusted = $makeRequest($spoofed);
+$trusted->trustProxies(['203.0.113.9']);
+
+check('Güvenilen vekilde CF başlığı okunur', $trusted->ip() === '5.6.7.8', $trusted->ip());
+
+$cidr = $makeRequest($spoofed);
+$cidr->trustProxies(['203.0.113.0/24']);
+
+check('CIDR ile güven çalışır', $cidr->ip() === '5.6.7.8', $cidr->ip());
+
+$wrongCidr = $makeRequest($spoofed);
+$wrongCidr->trustProxies(['10.0.0.0/8']);
+
+check('Kapsam dışı CIDR güvenilmez', $wrongCidr->ip() === '203.0.113.9', $wrongCidr->ip());
+
+$chain = $makeRequest([
+    'REMOTE_ADDR'          => '10.0.0.5',
+    'HTTP_X_FORWARDED_FOR' => '198.51.100.7, 10.0.0.5',
+]);
+$chain->trustProxies(['10.0.0.0/8']);
+
+check('XFF zincirinin ilk değeri alınır', $chain->ip() === '198.51.100.7', $chain->ip());
+
+$garbage = $makeRequest([
+    'REMOTE_ADDR'          => '10.0.0.5',
+    'HTTP_X_FORWARDED_FOR' => 'bu-bir-ip-degil',
+]);
+$garbage->trustProxies(['10.0.0.5']);
+
+check('Geçersiz başlık REMOTE_ADDR\'e düşer', $garbage->ip() === '10.0.0.5', $garbage->ip());
+
+$noRemote = $makeRequest(['HTTP_X_FORWARDED_FOR' => '1.2.3.4']);
+
+check('REMOTE_ADDR yoksa başlığa güvenilmez', $noRemote->ip() === '0.0.0.0', $noRemote->ip());
+
+/* -------------------------------------------------------------------------
  * 6c. Eklenti bağımlılığı
  * ---------------------------------------------------------------------- */
 

@@ -165,6 +165,12 @@ final class Installer
                 'app'    => Str::random(32),
                 'cookie' => Str::random(32),
             ],
+            /*
+             * Boş yazılır ama YAZILIR: kullanıcı config.php'yi açtığında bu
+             * ayarın var olduğunu görsün. Boş liste "hiçbir vekil başlığına
+             * güvenme" demek; ters vekil arkasındaki kurulumlar burayı doldurur.
+             */
+            'trusted_proxies' => [],
         ]);
 
         if (!$config->writeTo($this->rootDir . '/config.php')) {
