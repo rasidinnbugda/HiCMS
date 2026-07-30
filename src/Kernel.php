@@ -274,7 +274,9 @@ final class Kernel
             $c->get('users'),
             $c->get('mediaRepo'),
             $c->get('events'),
-            $c->get('types')
+            $c->get('types'),
+            // Blok ağacını kayıt anında temizler; bkz. ContentRepository::save().
+            $c->get('blocks')
         ));
 
         $c->singleton('links', fn(Container $c): Permalinks => new Permalinks(

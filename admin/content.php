@@ -118,6 +118,9 @@ $page = [
     'title'       => $type->plural,
     'slug'        => 'content:' . $typeName,
     'description' => $type->description,
+    // Kaç kayıt olduğu yoğun bir araçta birincil bilgi: başlığın yanında ve
+    // komut şeridinde görünür.
+    'count'       => $result['total'],
     'actions'     => '<a class="btn btn-primary" href="' . esc_url($type->editUrl()) . '">'
         . admin_icon('plus', 15) . 'Yeni ' . esc_html(mb_strtolower($type->singular)) . '</a>',
 ];
@@ -224,8 +227,16 @@ admin_head($page);
                     <tbody>
                         <?php foreach ($result['items'] as $entry) : ?>
                             <?php $canEdit = $app->auth()->canEdit($entry->authorId); ?>
-                            <tr>
-                                <td class="pick">
+                            <?php
+                            /*
+                             * data-status satırın sol kenarındaki 2px'lik durum
+                             * şeridini sürer (admin.css, td.edge). Yayın durumu
+                             * listeyi taramanın en hızlı yolu; dolgulu etiket
+                             * yerine kenar rengi kullanılıyor.
+                             */
+                            ?>
+                            <tr data-status="<?= esc_attr($entry->status) ?>">
+                                <td class="pick edge">
                                     <label class="check">
                                         <input type="checkbox" name="ids[]" value="<?= (int) $entry->id ?>">
                                         <span class="sr-only"><?= esc_html($entry->title) ?> seç</span>
@@ -239,15 +250,13 @@ admin_head($page);
                                     <?php else : ?>
                                         <span class="cell-title"><?= esc_html($entry->title) ?></span>
                                     <?php endif; ?>
-                                    <span class="cell-sub mono">
+                                    <?php // Alt bilgi başlığın YANINDA: alt satıra geçmesi satırı iki katına çıkarıyordu. ?>
+                                    <span class="cell-sub">
                                         /<?= esc_html($type->route !== '' ? $type->route . '/' : '') ?><?= esc_html($entry->slug) ?>
-                                        <?php if ($entry->featured) : ?>
-                                            · <span class="pill is-info no-dot">öne çıkan</span>
-                                        <?php endif; ?>
-                                        <?php if ($entry->isScheduled()) : ?>
-                                            · <span class="pill is-warn no-dot">zamanlanmış</span>
-                                        <?php endif; ?>
                                     </span>
+                                    <?php if ($entry->featured) : ?>
+                                        <span class="pill is-info no-dot">öne çıkan</span>
+                                    <?php endif; ?>
                                 </td>
                                 <td>
                                     <div class="cell-person">
@@ -273,7 +282,7 @@ admin_head($page);
                                     <td class="num"><?= (int) $entry->commentCount ?></td>
                                 <?php endif; ?>
                                 <td class="num"><?= esc_html(Str::number($entry->views)) ?></td>
-                                <td class="small muted nowrap"><?= ui_time($entry->publishedAt ?? $entry->createdAt) ?></td>
+                                <td class="when"><?= ui_time($entry->publishedAt ?? $entry->createdAt) ?></td>
                                 <td><?= ui_status($entry->status) ?></td>
                                 <td class="fit">
                                     <div class="row-acts">

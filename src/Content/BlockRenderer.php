@@ -10,6 +10,7 @@ use HiCMS\Http\Url;
 use HiCMS\Model\Entry;
 use HiCMS\Model\MediaItem;
 use HiCMS\Repository\MediaRepository;
+use HiCMS\Support\Html;
 use HiCMS\Support\Str;
 
 /**
@@ -110,10 +111,11 @@ final class BlockRenderer
      */
     public function rich(string $value): string
     {
-        $value = Str::safeHtml($value);
+        $value = Html::clean($value);
 
-        // Zaten blok etiketi içeriyorsa dokunma.
-        if (preg_match('/<(p|ul|ol|blockquote|h[2-6]|figure|div|table)\b/i', $value) === 1) {
+        // Zaten blok etiketi içeriyorsa dokunma. (`div` temizleyicinin izin
+        // listesinde yok; soyulduğu için burada aranmaz.)
+        if (preg_match('/<(p|ul|ol|blockquote|h[2-6]|figure|table|pre)\b/i', $value) === 1) {
             return $value;
         }
 
@@ -132,7 +134,7 @@ final class BlockRenderer
     /** Kullanıcı HTML'i — güvenli etiket kümesine indirgenir. */
     public function safe(string $value): string
     {
-        return Str::safeHtml($value);
+        return Html::clean($value);
     }
 
     /**

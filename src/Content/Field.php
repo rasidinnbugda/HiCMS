@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace HiCMS\Content;
 
+use HiCMS\Support\Html;
 use HiCMS\Support\Str;
 
 /**
@@ -83,7 +84,7 @@ final class Field
         return match ($this->type) {
             'number'     => is_numeric($value) ? (float) $value + 0 : 0,
             'switch'     => in_array($value, ['1', 'on', 'true', true, 1], true),
-            'richtext'   => Str::safeHtml(is_string($value) ? $value : ''),
+            'richtext'   => Html::clean(is_string($value) ? $value : ''),
             'code'       => is_string($value) ? $value : '',
             'textarea'   => is_string($value) ? trim($value) : '',
             'lines'      => $this->sanitizeLines($value),

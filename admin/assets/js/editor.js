@@ -82,7 +82,47 @@
         let control;
 
         switch (field.type) {
-            case 'richtext':
+            /*
+             * Zengin metin: contenteditable yüzey + balon araç çubuğu.
+             *
+             * 0.2.0'da bu tür de <textarea> olarak basılıyordu; kullanıcı kalın
+             * yazmak için elle <strong> yazmak zorundaydı ve editörde ham etiket
+             * görüyordu. Yüzey HiRichText'ten gelir (richtext.js).
+             *
+             * richtext.js yüklenmemişse — bir eklenti hata verdiyse ya da dosya
+             * önbellekten gelmediyse — textarea'ya düşülür. Biçimlendirme
+             * kaybolur ama İÇERİK DÜZENLENEBİLİR kalır; sessizce kullanılamaz
+             * bir alan bırakmak en kötü sonuç olurdu.
+             */
+            case 'richtext': {
+                if (window.HiRichText) {
+                    control = el('div', 'rt-host');
+
+                    const rich = window.HiRichText.attach(control, {
+                        value: data[field.key] ?? '',
+                        placeholder: field.placeholder || 'Yazmaya başlayın…',
+                        onChange: (html) => {
+                            data[field.key] = html;
+                            onChange();
+                        },
+                    });
+
+                    // Blok kaldırıldığında dinleyiciler sökülsün.
+                    control._hiRich = rich;
+                    break;
+                }
+
+                control = el('textarea', 'input');
+                control.rows = field.rows || 4;
+                control.value = data[field.key] ?? '';
+                control.setAttribute('data-count-from', '');
+                control.addEventListener('input', () => {
+                    data[field.key] = control.value;
+                    onChange();
+                });
+                break;
+            }
+
             case 'textarea':
             case 'lines':
             case 'code': {
@@ -298,18 +338,30 @@
         card.draggable = true;
         card.dataset.index = String(index);
 
-        /* Üst şerit */
+        /*
+         * Kabuk iki parçaya ayrıldı:
+         *   .block-bar   → sol oluk: sürükleme tutamağı + tür simgesi
+         *   .block-acts  → sağ üst:  taşı, çoğalt, daralt, kaldır
+         *
+         * 0.2.0'da bunların hepsi blok üstünde 41px'lik yatay bir şeritteydi ve
+         * her blokta duruyordu. Şimdi ikisi de yalnızca imleç blokta ya da
+         * içindeyken görünüyor; yazarken ekranda yalnızca metin var.
+         */
         const bar = el('div', 'block-bar');
 
         const grip = el('span', 'grip');
         grip.setAttribute('aria-hidden', 'true');
+        grip.title = 'Sürükleyerek taşı';
         grip.insertAdjacentHTML('beforeend', icon('drag'));
 
         const kind = el('span', 'block-kind');
+        kind.title = definition.label;
         kind.insertAdjacentHTML('beforeend', icon(definition.icon || 'block'));
         kind.appendChild(el('span', null, definition.label));
 
-        const spacer = el('span', 'spacer');
+        bar.append(grip, kind);
+
+        const acts = el('div', 'block-acts');
 
         const collapse = iconButton('chevron-down', 'Daralt/genişlet');
         const duplicate = iconButton('grid', 'Çoğalt');
@@ -317,20 +369,106 @@
         const down = iconButton('chevron-right', 'Aşağı taşı');
         const remove = iconButton('trash', 'Bloğu kaldır');
 
-        bar.append(grip, kind, spacer, up, down, duplicate, collapse, remove);
+        acts.append(up, down, duplicate, collapse, remove);
 
-        /* Gövde */
+        /*
+         * Gövde iki katmana ayrılır:
+         *
+         *   BİRİNCİL alan  → doğrudan, ETİKETSİZ basılır.
+         *   İkincil alanlar → istendiğinde açılan .block-more içinde.
+         *
+         * Neden: bir paragraf bloğunun tek önemli şeyi metnin kendisi. 0.2.0'da
+         * metnin üstünde "Metin" etiketi, altında `lead` anahtarı duruyordu ve
+         * blok 275px'e çıkıyordu. Etiket bilgi taşımıyor — bloğun türü zaten
+         * sol oluktaki simgede yazıyor. İkincil alanlar da her zaman görünmek
+         * zorunda değil; yazarken değil, ayarlarken gerekiyorlar.
+         *
+         * Birincil alan, tanımın İLK zengin metin ya da metin alanı sayılır.
+         * Blok türü `primary` anahtarıyla bunu açıkça belirtebilir.
+         */
         const body = el('div', 'block-body');
+        const fields = definition.fields || [];
 
-        (definition.fields || []).forEach((field) => {
-            body.appendChild(buildField(field, block.data, sync));
+        /*
+         * Birincil alan arayışı SIRALI: metin taşıyan ilk alan.
+         *
+         * `text` de aranmak zorunda — başlık bloğunun metni `richtext` değil
+         * `text` türünde. Bu atlandığında başlık bloğunun TÜM alanları ikincil
+         * sayılıp gizleniyor ve blok 2px'e çöküyordu.
+         */
+        let primaryKey = definition.primary || null;
+
+        if (!primaryKey) {
+            const order = ['richtext', 'text', 'textarea', 'code'];
+
+            for (const type of order) {
+                const candidate = fields.find((f) => f.type === type);
+
+                if (candidate) {
+                    primaryKey = candidate.key;
+                    break;
+                }
+            }
+        }
+
+        /*
+         * Metin alanı olmayan bloklar (ayıraç, galeri, gömme) için gizleme
+         * YAPILMAZ: birincil alan yoksa geriye gizlenecek "ikincil" alan da
+         * kalmaz, yoksa blok tamamen boş görünür.
+         */
+        const secondary = [];
+
+        fields.forEach((field) => {
+            if (primaryKey === null) {
+                body.appendChild(buildField(field, block.data, sync));
+                return;
+            }
+
+            if (field.key === primaryKey) {
+                // Etiketi bastırmak için alanın kopyası kullanılır; tanım
+                // paylaşıldığı için orijinali değiştirmek diğer blokları etkiler.
+                body.appendChild(buildField({ ...field, label: '' }, block.data, sync));
+                return;
+            }
+
+            secondary.push(field);
         });
 
-        if (!(definition.fields || []).length) {
+        if (!fields.length) {
             body.appendChild(el('p', 'muted small', 'Bu bloğun ayarlanacak alanı yok.'));
         }
 
-        collapse.addEventListener('click', () => body.classList.toggle('is-collapsed'));
+        let more = null;
+
+        if (secondary.length) {
+            more = el('div', 'block-more');
+            more.hidden = true;
+
+            secondary.forEach((field) => {
+                more.appendChild(buildField(field, block.data, sync));
+            });
+
+            body.appendChild(more);
+        }
+
+        /*
+         * Daralt düğmesi iki iş yapıyordu. Artık ayrıştı: ikincil alanı olan
+         * blokta o alanları açıp kapatır (asıl ihtiyaç), olmayan blokta gövdeyi
+         * daraltır.
+         */
+        collapse.title = more ? 'Blok ayarları' : 'Daralt/genişlet';
+        collapse.setAttribute('aria-label', collapse.title);
+        collapse.setAttribute('aria-expanded', 'false');
+
+        collapse.addEventListener('click', () => {
+            if (more) {
+                more.hidden = !more.hidden;
+                collapse.setAttribute('aria-expanded', more.hidden ? 'false' : 'true');
+                return;
+            }
+
+            body.classList.toggle('is-collapsed');
+        });
 
         remove.addEventListener('click', () => {
             if (!confirm('Bu bloğu kaldırmak istiyor musunuz?')) return;
@@ -349,7 +487,7 @@
         up.addEventListener('click', () => move(Number(card.dataset.index), -1));
         down.addEventListener('click', () => move(Number(card.dataset.index), 1));
 
-        card.append(bar, body);
+        card.append(bar, acts, body);
 
         return card;
     }

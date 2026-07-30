@@ -64,8 +64,48 @@ if ($app->request()->isPost()) {
     $entry->excerpt = trim((string) ($_POST['ozet'] ?? ''));
     $entry->status  = in_array($requested, $type->statuses, true) ? $requested : 'draft';
 
-    $blocks        = json_decode((string) ($_POST['bloklar'] ?? '[]'), true);
-    $entry->blocks = is_array($blocks) ? $blocks : [];
+    /*
+     * VERİ KAYBI KORUMASI.
+     *
+     * Blok ağacı yalnızca editor.js'in doldurduğu gizli `bloklar` alanından
+     * gelir. 0.2.0'da bu satır `$_POST['bloklar'] ?? '[]'` yazıyordu, yani:
+     *
+     *   - Alan HİÇ gelmezse    → '[]' → blocks = []  → İÇERİK SİLİNİR
+     *   - Alan boş gelirse     → ''   → null → []    → İÇERİK SİLİNİR
+     *   - JSON bozuk gelirse   → null → []           → İÇERİK SİLİNİR
+     *
+     * Üçü de gerçekleşebilir: JS yüklenmeden form gönderilirse, bir eklenti
+     * hata verip editörü kurmazsa, tarayıcı alanı kırparsa ya da istek yarıda
+     * kesilirse. Sonuç sessiz ve geri dönüşsüz bir içerik silme.
+     *
+     * Artık üç durum ayrı: yalnızca GEÇERLİ bir dizi geldiğinde bloklar
+     * değiştirilir. Aksi hâlde mevcut ağaç KORUNUR ve kullanıcı uyarılır —
+     * çünkü "boş içerik kaydetmek istedim" ile "editör çalışmadı" arasındaki
+     * farkı sunucu bilemez ve varsayılan davranış veriyi korumak olmalı.
+     *
+     * İçeriği gerçekten boşaltmak isteyen kullanıcı bunu editörde blokları
+     * silerek yapar; o durumda alan '[]' olarak gelir ve geçerli bir dizidir.
+     */
+    if (array_key_exists('bloklar', $_POST)) {
+        $raw     = (string) $_POST['bloklar'];
+        $decoded = $raw === '' ? null : json_decode($raw, true);
+
+        if (is_array($decoded)) {
+            $entry->blocks = $decoded;
+        } elseif (!$isNew) {
+            admin_flash(
+                'warning',
+                'İçerik blokları okunamadı; mevcut içerik korundu. Diğer alanlardaki '
+                . 'değişiklikler kaydedildi. Sayfayı yenileyip yeniden deneyin.'
+            );
+        }
+    } elseif (!$isNew) {
+        admin_flash(
+            'warning',
+            'İçerik blokları gönderilmedi; mevcut içerik korundu. Editör yüklenmediyse '
+            . 'sayfayı yenileyin.'
+        );
+    }
 
     $entry->featured     = isset($_POST['one_cikan']);
     $entry->commentsOpen = isset($_POST['yorumlar']);
@@ -372,10 +412,22 @@ admin_head($page);
                 </div>
                 <footer class="box-foot">
                     <?php if (!$isNew && $app->auth()->can('content.delete')) : ?>
-                        <a class="btn btn-sm btn-danger" href="content-delete.php?id=<?= (int) $entry->id ?>&amp;_t=<?= esc_attr(hi()->csrf()->token()) ?>"
-                           <?= ui_confirm('Bu içerik kalıcı olarak silinecek. Devam edilsin mi?') ?>>
+                        <?php
+                        /*
+                         * Silme POST ile. 0.2.0'da anahtarı sorgu dizesinde taşıyan
+                         * bir bağlantıydı; tarayıcı ön-getirmesi, bir bağlantı
+                         * önizleyicisi ya da geçmişten açılan sekme içeriği
+                         * silebiliyordu. GET durum değiştirmez.
+                         *
+                         * Düğme sayfanın altındaki gizli forma gönderilir; iç içe
+                         * form yasağı bu şekilde aşılıyor (paneldeki yerleşik kalıp).
+                         */
+                        ?>
+                        <button class="btn btn-sm btn-danger" type="submit"
+                                form="content-delete-form"
+                                <?= ui_confirm('Bu içerik kalıcı olarak silinecek. Devam edilsin mi?') ?>>
                             <?= admin_icon('trash', 14) ?>Sil
-                        </a>
+                        </button>
                     <?php endif; ?>
                     <span class="spacer"></span>
                     <button class="btn btn-sm btn-primary" type="submit">Kaydet</button>
@@ -483,6 +535,20 @@ admin_head($page);
     </div>
 </form>
 
+<?php if (!$isNew && $app->auth()->can('content.delete')) : ?>
+    <?php
+    /*
+     * Silme formu. Düzenleme formunun İÇİNDE olamaz (iç içe form yasak), o
+     * yüzden dışarıda duruyor ve silme düğmesi form="content-delete-form" ile
+     * buraya gönderiyor.
+     */
+    ?>
+    <form id="content-delete-form" method="post" action="content-delete.php" hidden>
+        <?= hi_csrf_field() ?>
+        <input type="hidden" name="id" value="<?= (int) $entry->id ?>">
+    </form>
+<?php endif; ?>
+
 <?php /* Medya seçme penceresi */ ?>
 <div class="modal" id="media-modal" hidden role="dialog" aria-modal="true" aria-labelledby="media-modal-title">
     <div class="modal-box is-wide">
@@ -525,6 +591,8 @@ admin_head($page);
         icons:  <?= esc_json($iconMap) ?>
     };
 </script>
+<?php // richtext.js editor.js'ten ÖNCE: editör alan kurarken HiRichText hazır olmalı. ?>
+<script src="<?= esc_attr(admin_asset('assets/js/richtext.js')) ?>"></script>
 <script src="<?= esc_attr(admin_asset('assets/js/editor.js')) ?>"></script>
 <script>
     /* Öne çıkan görsel seçimi: medya penceresini editörden bağımsız kullanır. */

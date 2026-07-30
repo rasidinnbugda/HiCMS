@@ -343,7 +343,13 @@ function admin_head(array $page): void
                         <a class="menu-item" href="settings.php"><?= admin_icon('settings', 15) ?>Ayarlar</a>
                     <?php endif; ?>
                     <div class="menu-sep"></div>
-                    <a class="menu-item is-danger" href="logout.php"><?= admin_icon('log-out', 15) ?>Çıkış yap</a>
+                    <?php // Çıkış durum değiştirir: bağlantı değil, doğrulanmış POST. ?>
+                    <form method="post" action="logout.php">
+                        <?= hi_csrf_field() ?>
+                        <button class="menu-item is-danger" type="submit">
+                            <?= admin_icon('log-out', 15) ?>Çıkış yap
+                        </button>
+                    </form>
                 </div>
             </div>
         </header>
@@ -448,6 +454,16 @@ function admin_foot(): void
 </body>
 </html>
     <?php
+    /*
+     * Oturum kilidi burada bırakılır. Sayfa tamamlandı, eklentiler de
+     * admin.footer kancasında yazma şansını kullandı; bundan sonra $_SESSION'a
+     * yazacak bir şey yok.
+     *
+     * Bırakılmazsa aynı kullanıcıdan gelen paralel istekler (otomatik kaydetme,
+     * anlık arama, kısmi güncelleme) oturum dosyasının kilidini bekleyerek tek
+     * tek çalışır — panelin "anında" hissetmesi imkânsız hale gelir.
+     */
+    hi()->auth()->closeSession();
 }
 
 /* -------------------------------------------------------------------------

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace HiCMS\Repository;
 
+use HiCMS\Content\BlockRegistry;
 use HiCMS\Content\TypeRegistry;
 use HiCMS\Database\Connection;
 use HiCMS\Events\Content\Deleted;
@@ -30,6 +31,13 @@ final class ContentRepository
         private readonly MediaRepository $media,
         private readonly Dispatcher $events,
         private readonly TypeRegistry $types,
+        /*
+         * Blok kayıt defteri, blok ağacını KAYIT ANINDA temizlemek için
+         * gerekiyor. Model (Entry) buna erişemez — statik bir yöntemden
+         * kayıt defterine ulaşmak modeli çekirdeğe bağlardı. Temizleme bu
+         * yüzden depoda, yani verinin veritabanına girdiği sınırda yapılıyor.
+         */
+        private readonly ?BlockRegistry $blocks = null,
     ) {
     }
 
@@ -378,7 +386,20 @@ final class ContentRepository
             $entry->id
         );
 
+        /*
+         * Yapı normalize edilir, ardından İÇERİK temizlenir.
+         *
+         * İkinci adım 0.3.0'da eklendi: 0.2.0 temizlemeyi yalnızca render
+         * anında yapıyordu, veritabanına ham HTML yazıyordu. Ön yüz güvenliydi
+         * ama blok metnini render yolundan geçmeden okuyan her tüketici (JSON
+         * çıktısı, dışa aktarma, arama, denetim günlüğü, eklentiler, panelin
+         * kendisi) ham veriyi görüyordu.
+         */
         $entry->blocks = Entry::normalizeBlocks($entry->blocks);
+
+        if ($this->blocks !== null) {
+            $entry->blocks = $this->blocks->sanitizeTree($entry->blocks);
+        }
 
         // Yayınlanıyorsa ve tarih yoksa şimdi olarak damgala.
         if ($entry->status === 'published' && ($entry->publishedAt === null || $entry->publishedAt === '')) {

@@ -328,9 +328,24 @@ foreach ([
 
 echo "\nYazma işlemleri\n";
 
+/*
+ * Satır içi biçimler editörün ürettiği biçimde yazılır. Kaydedildikten sonra
+ * geri okunduğunda AYNEN durmalı: istemcide uygulanan bir biçim sunucuda
+ * kayboluyorsa zengin metin özelliği çalışmıyor demektir.
+ *
+ * Aynı dizide zararlı girdiler de var — onların DÜŞTÜĞÜ doğrulanıyor.
+ */
+$inline = '<strong>kalın</strong>, <em>italik</em>, <code>kod</code>, <mark>işaret</mark>, '
+    . '<s>çizili</s>, m<sup>2</sup>, H<sub>2</sub>O ve <a href="/hakkinda">bağlantı</a>';
+
+$hostile = 'zararsız<script>alert(1)</script> <strong style="color:red" onclick="alert(2)">x</strong> '
+    . '<a href="javascript:alert(3)">y</a>';
+
 $tree = json_encode([
     ['type' => 'paragraph', 'data' => ['text' => 'Doğrulama betiğinin yazdığı paragraf.', 'lead' => true]],
     ['type' => 'heading',   'data' => ['text' => 'Ara başlık', 'level' => 'h2']],
+    ['type' => 'paragraph', 'data' => ['text' => $inline, 'lead' => false]],
+    ['type' => 'paragraph', 'data' => ['text' => $hostile, 'lead' => false]],
     ['type' => 'quote',     'data' => ['text' => 'Test edilmeyen kod, çalıştığı varsayılan koddur.', 'cite' => 'Doğrulama']],
 ], JSON_UNESCAPED_UNICODE);
 
@@ -354,8 +369,34 @@ $newId = (int) ($created['id'] ?? 0);
 
 if ($created !== false) {
     check('durum yayında', $created['status'] === 'published', (string) $created['status']);
-    check('üç blok saklandı', count((array) json_decode((string) $created['blocks'], true)) === 3);
+    check('beş blok saklandı', count((array) json_decode((string) $created['blocks'], true)) === 5);
     page('yeni yazı ön yüzde', '/yazi/dogrulama-yazisi', 200, ['Doğrulama betiğinin yazdığı']);
+
+    /* ------------------------------------------- satır içi biçim gidiş-dönüşü */
+
+    $tree = (array) json_decode((string) $created['blocks'], true);
+    $kept = (string) ($tree[2]['data']['text'] ?? '');
+    $bad  = (string) ($tree[3]['data']['text'] ?? '');
+
+    foreach (['strong', 'em', 'code', 'mark', 's', 'sup', 'sub'] as $tag) {
+        check("satır içi <{$tag}> korundu", str_contains($kept, '<' . $tag . '>'), $kept);
+    }
+
+    check('satır içi bağlantı korundu', str_contains($kept, 'href="/hakkinda"'), $kept);
+    check('Türkçe karakterler korundu', str_contains($kept, 'işaret') && str_contains($kept, 'çizili'));
+
+    check('script bloğu düştü', !str_contains(strtolower($bad), 'alert(1)'), $bad);
+    check('style özniteliği düştü', !str_contains($bad, 'style='), $bad);
+    check('onclick özniteliği düştü', !str_contains(strtolower($bad), 'onclick'), $bad);
+    check('javascript: şeması düştü', !str_contains(strtolower($bad), 'javascript:'), $bad);
+    check('zararsız metin korundu', str_contains($bad, 'zararsız'), $bad);
+
+    // Ön yüzde de gerçek biçim basılmalı, ham etiket değil.
+    $rendered = request($base . '/yazi/dogrulama-yazisi', [], true)['body'];
+
+    check('ön yüzde kalın basıldı', str_contains($rendered, '<strong>kalın</strong>'));
+    check('ön yüzde ham etiket görünmüyor', !str_contains($rendered, '&lt;strong&gt;kalın'));
+    check('ön yüzde alert sızmadı', !str_contains(strtolower($rendered), 'alert(1)'));
 }
 
 if ($newId > 0) {
@@ -427,6 +468,71 @@ $afterPlugin   = array_map('strval', $db->query('SHOW TABLES')->fetchAll(PDO::FE
 check('eklenti etkinleştirildi', str_contains($activePlugins, 'hi-seo'), $activePlugins);
 check('eklenti migration\'ı çalıştı', in_array('hi_seo_redirects', $afterPlugin, true));
 
+/* --------------------------------------------- 4b. güvenlik regresyonları */
+
+echo "\nGüvenlik regresyonları\n";
+
+/*
+ * Bu denetimler 0.2.0'da bulunup düzeltilen hataların geri gelmemesini sağlar.
+ * Hepsi gerçek HTTP üzerinden, oturum açık olarak yapılır.
+ */
+
+// GET ile çıkış oturumu kapatmamalı; onay ekranı göstermeli.
+$logoutGet = request($base . '/admin/logout.php', [], true);
+
+check(
+    'GET ile çıkış oturumu kapatmıyor',
+    $logoutGet['status'] === 200 && str_contains($logoutGet['body'], 'emin misiniz'),
+    'durum ' . $logoutGet['status']
+);
+
+check(
+    'GET çıkıştan sonra oturum hâlâ açık',
+    !str_contains(request($base . '/admin/index.php', [], true)['body'], 'name="sifre"')
+);
+
+// GET ile içerik silme reddedilmeli (tarayıcı ön-getirmesi içerik silmesin).
+$deleteGet = request($base . '/admin/content-delete.php?id=1', [], false);
+
+check(
+    'GET ile silme reddediliyor',
+    $deleteGet['status'] === 303,
+    'durum ' . $deleteGet['status']
+);
+
+check(
+    'GET silme denemesinden sonra içerik duruyor',
+    (int) $db->query('SELECT COUNT(*) FROM hi_content WHERE id = 1')->fetchColumn() === 1
+);
+
+// Ayarlarda 'bolum' alanı olmadan gönderim reddedilmeli: 0.2.0'da eksik alan
+// GET sekmesinden tahmin ediliyor ve YANLIŞ bölümün alanları kaydediliyordu.
+$titleBefore = (string) $db->query("SELECT value FROM hi_options WHERE name = 'site_title'")->fetchColumn();
+
+request($base . '/admin/settings.php?sekme=okuma', [
+    '_token'     => token($base . '/admin/settings.php?sekme=okuma'),
+    'site_title' => 'BU KAYDEDILMEMELI',
+]);
+
+check(
+    'bölüm bildirilmeyen ayar gönderimi reddediliyor',
+    (string) $db->query("SELECT value FROM hi_options WHERE name = 'site_title'")->fetchColumn() === $titleBefore,
+    'başlık değişti'
+);
+
+// Sistem bölümünde tanınmayan işlem reddedilmeli: 0.2.0'da listede olmayan
+// işlem hiçbir izin denetiminden geçmiyordu ('run-jobs' listede yoktu).
+$unknown = request($base . '/admin/system.php?sekme=durum', [
+    '_token' => token($base . '/admin/system.php?sekme=durum'),
+    'islem'  => 'boyle-bir-islem-yok',
+]);
+
+check(
+    'tanınmayan sistem işlemi reddediliyor',
+    $unknown['status'] === 303,
+    'durum ' . $unknown['status']
+);
+
 /* ------------------------------------------------------- 5. planlı görevler */
 
 echo "\nPlanlı görevler\n";
@@ -450,12 +556,11 @@ check('görev hatasız tamamlandı', ($job['last_error'] ?? null) === null || ($
 if ($newId > 0) {
     echo "\nSilme\n";
 
-    request(
-        $base . '/admin/content-delete.php?id=' . $newId
-            . '&_t=' . rawurlencode(token($base . '/admin/content.php?tur=post')),
-        [],
-        true
-    );
+    // Silme artık POST: GET ile silme tarayıcı ön-getirmesine açıktı.
+    request($base . '/admin/content-delete.php', [
+        '_token' => token($base . '/admin/content-edit.php?id=' . $newId),
+        'id'     => (string) $newId,
+    ]);
 
     $remaining = $db->query('SELECT status FROM hi_content WHERE id = ' . $newId)->fetchColumn();
 

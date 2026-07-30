@@ -5,8 +5,15 @@ declare(strict_types=1);
 /**
  * HiAdmin — İçerik silme
  *
- * Bağlantı üzerinden çağrılır ama anahtar doğrulaması yapılır, böylece
- * yalnızca panelden üretilmiş bağlantı çalışır.
+ * Yalnızca POST ile çalışır ve anahtar doğrulaması `admin_verify()` üzerinden
+ * yapılır.
+ *
+ * 0.2.0'da anahtar sorgu dizesinde (`?_t=`) taşınıyor ve silme bir GET
+ * bağlantısıydı: tarayıcı ön-getirmesi, bağlantı önizleyicisi ya da geçmişten
+ * yeniden açılan bir sekme içeriği silebiliyordu. Ayrıca CSRF doğrulaması
+ * panelin geri kalanından ayrı bir yol izliyordu — `admin_verify()` yalnızca
+ * `$_POST['_token']` okuyor, burası `$_GET['_t']` okuyordu; anahtar akışını
+ * değiştiren her düzeltme iki yeri birlikte gözetmek zorunda kalıyordu.
  *
  * @package HiCMS
  */
@@ -17,11 +24,13 @@ use HiCMS\Support\Str;
 
 admin_require('content.delete');
 
-$id = (int) ($_GET['id'] ?? 0);
-
-if (!$app->csrf()->verify((string) ($_GET['_t'] ?? ''))) {
-    admin_redirect('content.php', 'error', 'Güvenlik doğrulaması başarısız.');
+if (!$app->request()->isPost()) {
+    admin_redirect('content.php', 'error', 'Silme işlemi yalnızca panelden yapılabilir.');
 }
+
+admin_verify('content.php');
+
+$id = (int) ($_POST['id'] ?? 0);
 
 $entry = $id > 0 ? $app->content()->find($id, false) : null;
 

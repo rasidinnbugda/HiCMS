@@ -1710,39 +1710,193 @@ textarea.mono { font-family: var(--mono); font-size: var(--fs-sm); }
 }
 .slug-row .slug-input:focus { outline: none; border-color: var(--accent); border-style: solid; }
 
-.blocks { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+/*
+ * Blok kabuğu SOL OLUĞA çekildi.
+ *
+ * 0.2.0'da her blokta 41px'lik bir yönetim çubuğu vardı: tutamak, tür adı,
+ * beş düğme. Bir paragraf bloğu 275px yer kaplıyordu ve tek bir yazı 3340px —
+ * 4,6 ekran — kaydırma gerektiriyordu. Yazarken görülen şey içerik değil,
+ * kutu kenarlarıydı.
+ *
+ * Artık çubuk yok. Kart çerçevesi de yok. Blok, metnin doğal yüksekliğinde
+ * duruyor; tutamak ve tür simgesi sol olukta ve YALNIZCA imleç blokta ya da
+ * içindeyken görünüyor. Denetimler sağ üstte, aynı koşulla.
+ */
+.blocks {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s1);
+    margin-top: var(--s3);
+    /* Sol oluk için yer: tutamak içeriğin dışında durur. */
+    padding-left: 30px;
+}
 
 .block {
-    border: 1px solid var(--line);
+    position: relative;
+    border: 1px solid transparent;
     border-radius: var(--r-sm);
-    background: var(--surface);
+    background: transparent;
+    transition: border-color var(--fast) var(--ease);
 }
+.block:focus-within { border-color: var(--line); }
 .block.is-dragging { opacity: .45; }
 .block.is-over { border-color: var(--accent); }
 
+/* Oluk: sürükleme tutamağı + tür simgesi. */
 .block-bar {
+    position: absolute;
+    left: -30px; top: 2px;
+    width: 26px;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 8px;
-    padding: 7px 10px;
-    border-bottom: 1px solid var(--line);
-    background: var(--surface-2);
-    border-radius: var(--r-sm) var(--r-sm) 0 0;
+    gap: 1px;
+    opacity: 0;
+    transition: opacity var(--fast) var(--ease);
 }
-.block-bar .grip { color: var(--ink-4); cursor: grab; display: grid; place-items: center; }
-.block-kind {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--ink-2);
-}
-.block-bar .spacer { flex: 1; }
-.block-bar .icon-btn { width: 26px; height: 26px; }
+.block:hover > .block-bar,
+.block:focus-within > .block-bar { opacity: 1; }
 
-.block-body { padding: 12px; display: grid; gap: 12px; }
+.block-bar .grip {
+    color: var(--ink-4);
+    cursor: grab;
+    display: grid;
+    place-items: center;
+    width: 20px; height: 18px;
+    border-radius: var(--r-xs);
+}
+.block-bar .grip:hover { background: var(--surface-2); color: var(--ink-2); }
+
+/* Tür adı olukta sığmaz: yalnızca simge kalır, ad başlık ipucunda. */
+.block-kind {
+    display: grid;
+    place-items: center;
+    width: 20px; height: 18px;
+    border-radius: var(--r-xs);
+    color: var(--ink-4);
+    font-size: var(--fs-micro);
+    overflow: hidden;
+}
+.block-kind > span { display: none; }
+
+.block-bar .spacer { display: none; }
+
+/* Blok denetimleri: sağ üstte, imleç blokta olduğunda. */
+.block-acts {
+    position: absolute;
+    right: 2px; top: 2px;
+    display: flex;
+    gap: 1px;
+    padding: 2px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--surface);
+    opacity: 0;
+    transition: opacity var(--fast) var(--ease);
+}
+.block:hover > .block-acts,
+.block:focus-within > .block-acts { opacity: 1; }
+
+.block-acts .icon-btn {
+    width: 20px; height: 18px;
+    color: var(--ink-3);
+}
+.block-acts .icon-btn:hover { background: var(--surface-2); color: var(--ink); }
+
+@media (hover: none) {
+    .block-bar, .block-acts { opacity: 1; }
+}
+
+.block-body { padding: 0; display: grid; gap: var(--s2); }
 .block-body.is-collapsed { display: none; }
+
+/* İkincil blok alanları: yazarken değil, ayarlarken açılır. */
+.block-more {
+    display: grid;
+    gap: var(--s2);
+    margin-top: var(--s1);
+    padding: var(--s2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--surface-2);
+}
+.block-more[hidden] { display: none; }
+
+/* Etiketsiz basılan birincil alanın kendi boşluğu olmaz. */
+.block-body > .field:first-child { margin-bottom: 0; }
+
+/* -------------------------------------------------------------------------
+   17b. Zengin metin yüzeyi
+   ---------------------------------------------------------------------- */
+
+.rt-host { min-width: 0; }
+
+.rt {
+    min-height: 1.65em;
+    padding: 2px 0;
+    outline: 0;
+    font-size: 15.5px;
+    line-height: 1.65;
+    color: var(--ink);
+    /* Uzun URL ve kod satırları taşmasın. */
+    overflow-wrap: break-word;
+}
+.rt:empty::before,
+.rt[data-empty]::before {
+    content: attr(data-placeholder);
+    color: var(--ink-4);
+    pointer-events: none;
+}
+.rt strong { font-weight: var(--fw-bold); }
+.rt em { font-style: italic; }
+.rt s { text-decoration: line-through; }
+.rt mark { background: var(--accent-soft); color: var(--accent-ink); padding: 0 2px; border-radius: 2px; }
+.rt code {
+    font-family: var(--mono);
+    font-size: .88em;
+    background: var(--surface-2);
+    padding: 1px 4px;
+    border-radius: var(--r-xs);
+}
+.rt a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+}
+.rt sup, .rt sub { font-size: .72em; }
+
+/* Balon araç çubuğu: seçimin üstünde açılır, çerçeve renginde. */
+.rt-bubble {
+    position: absolute;
+    z-index: var(--z-pop);
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    padding: 3px;
+    border: 1px solid var(--frame-line);
+    border-radius: var(--r-sm);
+    background: var(--frame);
+    box-shadow: var(--pop);
+}
+.rt-bubble[hidden] { display: none; }
+
+.rt-btn {
+    min-width: 24px;
+    height: 23px;
+    padding: 0 var(--s1);
+    border: 0;
+    border-radius: var(--r-xs);
+    background: transparent;
+    color: var(--frame-ink);
+    font: inherit;
+    font-size: var(--fs-sm);
+    line-height: 1;
+    cursor: pointer;
+}
+.rt-btn:hover { background: var(--frame-hover); color: var(--frame-ink-hi); }
+.rt-btn[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.rt-sep { width: 1px; height: 14px; margin: 0 3px; background: var(--frame-line); }
 
 .block-add {
     display: flex;

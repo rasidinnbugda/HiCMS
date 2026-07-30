@@ -40,13 +40,34 @@ if ($app->request()->isPost()) {
 
     $action = (string) ($_POST['islem'] ?? '');
 
-    if (in_array($action, ['update-remote', 'update-upload', 'migrate'], true)) {
-        admin_require('system.update');
+    /*
+     * İzin haritası TEK yerde ve varsayılanı KAPALI.
+     *
+     * 0.2.0'da iki ayrı in_array listesi vardı ve listede olmayan bir işlem
+     * hiçbir izin denetiminden geçmiyordu. 'run-jobs' (satır ~111, planlı
+     * görevleri elle çalıştırır) her iki listede de yoktu: sistem bölümünü
+     * yalnızca 'system.logs' yetkisiyle açabilen bir kullanıcı — denetim
+     * günlüğünü okuması beklenen biri — planlı görevleri çalıştırabiliyordu.
+     *
+     * Artık bilinmeyen bir işlem eklemek izin boşluğu değil, reddedilen bir
+     * istek üretir.
+     */
+    $needs = [
+        'check'         => 'system.update',
+        'update-remote' => 'system.update',
+        'update-upload' => 'system.update',
+        'migrate'       => 'system.update',
+        'run-jobs'      => 'system.update',
+        'backup'        => 'system.backup',
+        'restore'       => 'system.backup',
+        'backup-delete' => 'system.backup',
+    ];
+
+    if (!isset($needs[$action])) {
+        admin_redirect($selfUrl($tab), 'error', 'Tanınmayan işlem.');
     }
 
-    if (in_array($action, ['backup', 'restore', 'backup-delete'], true)) {
-        admin_require('system.backup');
-    }
+    admin_require($needs[$action]);
 
     switch ($action) {
         case 'check':

@@ -73,6 +73,30 @@ final class Auth
     }
 
     /**
+     * Oturum dosyasının kilidini bırakır.
+     *
+     * PHP'nin dosya tabanlı oturum deposu `session_start()` ile ÖZEL bir kilit
+     * alır ve isteğin sonuna kadar tutar. Aynı kullanıcıdan gelen ikinci istek
+     * bu kilidi bekler — yani eşzamanlı istekler sıraya girer.
+     *
+     * Bu, panelin "anında" hissetmesinin önündeki en büyük engeldi: otomatik
+     * kaydetme, kısmi güncelleme ve anlık arama hep aynı oturumdan paralel
+     * istek atar; kilit bunları tek tek çalıştırır. Üstüne yanıt gönderildikten
+     * sonra çalışan planlayıcı da kilidi elinde tutarak veritabanı işi yapıyor
+     * ve kullanıcının sıradaki isteğini bekletiyordu.
+     *
+     * Çağrıldıktan sonra `$_SESSION`'a yazmak SESSİZCE kaybolur. Bu yüzden
+     * yalnızca isteğin oturuma artık yazmayacağı kesin olduğu noktalarda
+     * çağrılır: yanıt gövdesi tamamlandıktan sonra.
+     */
+    public function closeSession(): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+    }
+
+    /**
      * Oturumdaki kullanıcıyı döndürür.
      */
     public function user(): ?User

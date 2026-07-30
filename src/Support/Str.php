@@ -61,21 +61,18 @@ final class Str
 
     /**
      * Zengin metni güvenli bir etiket kümesine indirger.
-     * Blok içeriklerinde kullanıcı HTML'i buradan geçer.
+     *
+     * Gerçek iş `Html::clean()` tarafından yapılır: etiket bazlı izin listesi,
+     * etiket başına öznitelik listesi ve öznitelik değeri doğrulaması. Bu
+     * yöntem yalnızca geriye uyumluluk için durur — eklentiler ve temalar
+     * `Str::safeHtml()` çağırıyor olabilir.
+     *
+     * @deprecated 0.3.0 Doğrudan `Html::clean()` kullanın.
+     * @see Html::clean()
      */
     public static function safeHtml(?string $value): string
     {
-        $allowed = '<p><br><strong><b><em><i><u><s><a><ul><ol><li><blockquote>'
-            . '<h2><h3><h4><h5><h6><code><pre><figure><figcaption><img><hr>'
-            . '<table><thead><tbody><tr><th><td><small><sup><sub><span><div>';
-
-        $value = strip_tags((string) $value, $allowed);
-
-        // Olay öznitelikleri ve tehlikeli şemaları temizle.
-        $value = preg_replace('/\son[a-z]+\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)/i', '', $value) ?? '';
-        $value = preg_replace('/(href|src)\s*=\s*(["\']?)\s*(javascript|vbscript|data)\s*:/i', '$1=$2#', $value) ?? '';
-
-        return $value;
+        return Html::clean((string) $value);
     }
 
     /** URL'de kullanılabilir kısa ad üretir. Türkçe karakter duyarlı. */

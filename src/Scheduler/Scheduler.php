@@ -192,6 +192,17 @@ final class Scheduler
      */
     public function tick(): void
     {
+        /*
+         * Oturum kilidi ÖNCE bırakılır. Aksi hâlde aşağıdaki görev — günlük
+         * budama, güncelleme denetimi, geçici dosya temizliği — veritabanı işi
+         * yaparken oturum dosyasının kilidini elinde tutar ve kullanıcının
+         * sıradaki isteği bu işin bitmesini bekler. Yanıt zaten gönderildiği
+         * için oturuma yazacak bir şey kalmadı.
+         */
+        if (function_exists('session_write_close') && session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+
         if (function_exists('fastcgi_finish_request')) {
             @fastcgi_finish_request();
         }
