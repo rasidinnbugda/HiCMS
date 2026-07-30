@@ -117,8 +117,18 @@ function admin_verify(string $redirectTo = ''): void
         admin_redirect($redirectTo, 'error', 'Güvenlik doğrulaması başarısız. Formu yeniden gönderin.');
     }
 
+    /*
+     * Yönlendirme hedefi verilmediğinde 0.2.0 `exit('…')` ile çıplak bir metin
+     * basıyordu. En sık düşülen yer giriş sayfasıydı (login.php:25 hedefsiz
+     * çağırıyor): formu açıp bir süre bekleyen kullanıcı, anahtarın süresi
+     * dolduğu için stilsiz bir hata metniyle karşılaşıyor ve ne yapacağını
+     * bilmiyordu. Sebep genellikle saldırı değil, süre aşımı.
+     */
     http_response_code(419);
-    exit('Güvenlik doğrulaması başarısız.');
+    admin_deny(
+        'Güvenlik doğrulaması başarısız. Form çok uzun süre açık kaldıysa anahtarın '
+        . 'süresi dolmuş olabilir; sayfayı yenileyip yeniden deneyin.'
+    );
 }
 
 /**

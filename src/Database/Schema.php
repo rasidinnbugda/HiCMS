@@ -79,6 +79,9 @@ final class Schema
         }
 
         $this->db->exec(sprintf('DROP TABLE IF EXISTS `%s`', $this->db->t($table)));
+
+        // Varlık belleği artık yanlış: düşürülen tablo "var" olarak kalmasın.
+        $this->db->forgetSchemaCache();
     }
 
     public function hasTable(string $table): bool

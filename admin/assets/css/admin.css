@@ -2,14 +2,29 @@
    HiAdmin — HiCMS yönetim paneli
    -------------------------------------------------------------------------
    Tasarım kararları:
-     • Ayrımı gölge değil 1px kılçizgiler ve boşluk yapar. Panelde hiç gölge
-       yoktur; yalnızca üstte yüzen katmanlar (açılır menü, kalıcı pencere)
-       gölge kullanır.
-     • Nötr gri ölçek + tek vurgu rengi (#95389e). Durum renkleri yalnızca
-       nişan ve nokta işaretlerinde görünür.
-     • 8px ızgara. Tüm boşluklar 4/8/12/16/24/32/48 değerlerinden.
-     • Sayılar tabular rakamla hizalanır; tablolarda sütunlar optik olarak
-       aynı genişlikte durur.
+     • İKİ TONLU AYRIM. Uygulama çerçevesi (kenar çubuğu + komut şeridi) bir
+       alettir: mor dökümlü koyu, her iki temada aynı. Çalışma yüzeyi kâğıttır:
+       aydınlık temada beyaz. Nötr gri panel görünümünden çıkan şey bu ayrım.
+     • YOĞUN. Denetim yüksekliği 28px, tablo satırı 34px, kenar çubuğu 200px,
+       komut şeridi 44px. Liste ekranları tam genişlik; ölçü sınırı yalnızca
+       yazma ve okuma yüzeylerinde.
+     • Ayrımı gölge değil çizgi yapar. İki kalınlık: --line kılçizgi (satır),
+       --line-strong bölge ayrımı. Gölge yalnızca yüzen katmanlarda.
+     • DURUM BİLGİSİ RENKTİR, SÜS DEĞİL. Yayın durumu satırın sol kenarında
+       2px'lik bir şerit ve bir nokta olarak durur; dolgulu etiket kullanılmaz.
+     • Sayılar tabular rakamla hizalanır.
+
+   Ölçek kuralı: boşluk, yazı boyutu, ağırlık, yükseklik ve z-index için
+   belirteç KULLANILIR. Satır içi sabit değer yazmak bu dosyada hatadır —
+   0.2.0'da "8px ızgara" iddiası vardı ama 7/9/10/11/13/15/18/26/52 gibi
+   ızgara dışı 11 ayrı değer kullanılıyordu.
+
+   Yazı tipi: sistem yığını. 0.2.0 Inter'i Google Fonts'tan çekiyordu; panel
+   çevrimdışında sistem fontuna düşüyor, ayrıca her panel yüklemesi üçüncü
+   parti bir alan adına istek atıyordu. Ağırlık ölçeği bu yüzden yalnızca
+   400/500/600 — 450 ve 550 sistem yığınında güvenilir değil (0.2.0'da 550
+   sekiz yerde kullanılıyordu ama font isteğinde hiç yoktu, yani ağırlıkla
+   kurulan hiyerarşi çalışmıyordu).
    ========================================================================= */
 
 /* -------------------------------------------------------------------------
@@ -17,25 +32,39 @@
    ---------------------------------------------------------------------- */
 
 :root {
-    --bg:           #fafafa;
-    --surface:      #ffffff;
-    --surface-2:    #f6f6f7;
-    --line:         #ebebeb;
-    --line-strong:  #dcdcdc;
+    color-scheme: light;
 
-    --ink:          #18181b;
-    --ink-2:        #52525b;
-    --ink-3:        #8c8c96;
-    --ink-4:        #b4b4bd;
+    /* Çalışma yüzeyi — kâğıt */
+    --bg:           #f7f6f8;
+    --surface:      #ffffff;
+    --surface-2:    #f8f7f9;
+    --line:         #e9e7ed;
+    --line-strong:  #d7d4dd;
+
+    --ink:          #17161a;
+    --ink-2:        #605c69;
+    --ink-3:        #8b8794;
+    --ink-4:        #b1adb8;
+
+    /* Çerçeve — alet. Her iki temada koyu; iki tonlu ayrımın kaynağı. */
+    --frame:        #17161a;
+    --frame-2:      #100f12;
+    --frame-line:   #2a2830;
+    --frame-ink:    #a29ead;
+    --frame-ink-2:  #6f6b79;
+    --frame-ink-hi: #f4f3f6;
+    --frame-hover:  rgba(255, 255, 255, .05);
+    --frame-active: rgba(255, 255, 255, .08);
 
     --accent:       #95389e;
     --accent-hover: #7f2f88;
-    --accent-soft:  #f8f1f9;
+    --accent-soft:  #f7ecf8;
     --accent-line:  #e8d4ea;
-    --accent-ring:  rgba(149, 56, 158, 0.14);
+    --accent-ring:  rgba(149, 56, 158, 0.16);
+    --accent-ink:   #7c2c84;
     --on-accent:    #ffffff;
 
-    --ok:           #157f4a;
+    --ok:           #2f7d52;
     --ok-soft:      #edf8f2;
     --warn:         #96600c;
     --warn-soft:    #fdf6e9;
@@ -44,44 +73,169 @@
     --info:         #1d4ed8;
     --info-soft:    #eef2ff;
 
-    --pop:          0 1px 2px rgba(24, 24, 27, .06), 0 8px 24px rgba(24, 24, 27, .10);
-    --pop-lg:       0 2px 4px rgba(24, 24, 27, .06), 0 24px 56px rgba(24, 24, 27, .16);
+    /* Yayın durumları — CMS'in gerçek bilgisi. Satır kenarı ve nokta için. */
+    --st-draft:     #8b8794;
+    --st-review:    #475eb0;
+    --st-scheduled: #b0761d;
+    --st-published: #2f7d52;
+    --st-trash:     #a4423a;
 
-    --r-xs: 4px;
-    --r-sm: 6px;
-    --r:    8px;
-    --r-lg: 12px;
+    --pop:          0 1px 2px rgba(23, 22, 26, .06), 0 8px 24px rgba(23, 22, 26, .10);
+    --pop-lg:       0 2px 4px rgba(23, 22, 26, .06), 0 24px 56px rgba(23, 22, 26, .16);
+
+    --r-xs: 3px;
+    --r-sm: 4px;
+    --r:    6px;
+    --r-lg: 9px;
     --r-pill: 999px;
 
-    --side-w: 224px;
-    --bar-h:  56px;
+    /* Boşluk — 4px tabanlı */
+    --s1:  4px;
+    --s2:  8px;
+    --s3: 12px;
+    --s4: 16px;
+    --s5: 20px;
+    --s6: 24px;
+    --s7: 32px;
+    --s8: 48px;
 
-    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    --mono: ui-monospace, SFMono-Regular, 'JetBrains Mono', Consolas, 'Liberation Mono', monospace;
+    /* Yazı ölçeği */
+    --fs-micro: 10.5px;
+    --fs-xs:      11px;
+    --fs-sm:      12px;
+    --fs:       12.5px;
+    --fs-md:      13px;
+    --fs-lg:      14px;
+    --fs-xl:      16px;
+    --fs-title:   19px;
+    --fs-metric:  22px;
+
+    --fw:     400;
+    --fw-mid: 500;
+    --fw-bold: 600;
+
+    /* Yükseklik — denetimler aynı satırda hizalanır */
+    --h-ctl:    28px;
+    --h-ctl-sm: 24px;
+    --h-ctl-lg: 32px;
+    --row:      34px;
+    --row-head: 29px;
+
+    --side-w: 200px;
+    --side-w-rail: 52px;
+    --bar-h:  44px;
+
+    --z-bar:   50;
+    --z-scrim: 55;
+    --z-side:  60;
+    --z-pop:   90;
+    --z-modal: 200;
+    --z-toast: 250;
+    --z-skip:  300;
+
+    /* Sistem yığını: dış istek yok, çevrimdışı çalışır. */
+    --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text',
+            'Segoe UI', Inter, Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --mono: ui-monospace, 'Cascadia Mono', SFMono-Regular, 'SF Mono', 'JetBrains Mono',
+            Consolas, 'Liberation Mono', monospace;
 
     --ease: cubic-bezier(.4, 0, .2, 1);
+    --fast: .12s;
+    --mid:  .18s;
+}
+
+/*
+ * Karanlık tema iki yoldan gelir:
+ *   1. İşletim sistemi tercihi — JS GEREKMEZ.
+ *   2. Kullanıcının paneldeki seçimi — data-scheme.
+ *
+ * 0.2.0'da yalnızca ikincisi vardı ve özniteliği inline JS yazıyordu; JS
+ * kapalıyken panel her koşulda aydınlık kalıyordu. Bu, "JS kapalıyken temel
+ * işlevler çalışsın" kuralını ihlal ediyordu.
+ *
+ * :not([data-scheme="light"]) koşulu, işletim sistemi karanlıkken kullanıcının
+ * açıkça aydınlık seçmesinin kazanmasını sağlar.
+ */
+@media (prefers-color-scheme: dark) {
+    :root:not([data-scheme="light"]) {
+        color-scheme: dark;
+
+        --bg:           #131216;
+        --surface:      #17161a;
+        --surface-2:    #1d1c22;
+        --line:         #272530;
+        --line-strong:  #38353f;
+
+        --ink:          #ecebf0;
+        --ink-2:        #a5a1ae;
+        --ink-3:        #807c8a;
+        --ink-4:        #5e5a67;
+
+        --frame:        #100f13;
+        --frame-2:      #0a090c;
+        --frame-line:   #242229;
+        --frame-ink:    #8d8998;
+        --frame-ink-2:  #625e6b;
+        --frame-ink-hi: #f2f1f5;
+
+        --accent:       #cb87d3;
+        --accent-hover: #daa1e0;
+        --accent-soft:  #241a28;
+        --accent-line:  #3b2a41;
+        --accent-ring:  rgba(203, 135, 211, 0.22);
+        --accent-ink:   #dcabe2;
+        --on-accent:    #1b1020;
+
+        --ok:           #4fa878;
+        --ok-soft:      #10241a;
+        --warn:         #e0ac48;
+        --warn-soft:    #241c10;
+        --err:          #f08b83;
+        --err-soft:     #251514;
+        --info:         #8ea8ff;
+        --info-soft:    #151a2e;
+
+        --st-draft:     #8b8794;
+        --st-review:    #7d92d8;
+        --st-scheduled: #d69a3c;
+        --st-published: #4fa878;
+        --st-trash:     #c9695f;
+
+        --pop:          0 1px 2px rgba(0, 0, 0, .5), 0 8px 24px rgba(0, 0, 0, .5);
+        --pop-lg:       0 2px 4px rgba(0, 0, 0, .5), 0 24px 56px rgba(0, 0, 0, .6);
+    }
 }
 
 :root[data-scheme="dark"] {
-    --bg:           #0f0f11;
-    --surface:      #16161a;
-    --surface-2:    #1c1c21;
-    --line:         #26262b;
-    --line-strong:  #35353c;
+    color-scheme: dark;
 
-    --ink:          #ededf0;
-    --ink-2:        #a8a8b3;
-    --ink-3:        #7c7c88;
-    --ink-4:        #5b5b66;
+    --bg:           #131216;
+    --surface:      #17161a;
+    --surface-2:    #1d1c22;
+    --line:         #272530;
+    --line-strong:  #38353f;
+
+    --ink:          #ecebf0;
+    --ink-2:        #a5a1ae;
+    --ink-3:        #807c8a;
+    --ink-4:        #5e5a67;
+
+    --frame:        #100f13;
+    --frame-2:      #0a090c;
+    --frame-line:   #242229;
+    --frame-ink:    #8d8998;
+    --frame-ink-2:  #625e6b;
+    --frame-ink-hi: #f2f1f5;
 
     --accent:       #cb87d3;
     --accent-hover: #daa1e0;
     --accent-soft:  #241a28;
     --accent-line:  #3b2a41;
-    --accent-ring:  rgba(203, 135, 211, 0.2);
+    --accent-ring:  rgba(203, 135, 211, 0.22);
+    --accent-ink:   #dcabe2;
     --on-accent:    #1b1020;
 
-    --ok:           #4ec585;
+    --ok:           #4fa878;
     --ok-soft:      #10241a;
     --warn:         #e0ac48;
     --warn-soft:    #241c10;
@@ -89,6 +243,12 @@
     --err-soft:     #251514;
     --info:         #8ea8ff;
     --info-soft:    #151a2e;
+
+    --st-draft:     #8b8794;
+    --st-review:    #7d92d8;
+    --st-scheduled: #d69a3c;
+    --st-published: #4fa878;
+    --st-trash:     #c9695f;
 
     --pop:          0 1px 2px rgba(0, 0, 0, .5), 0 8px 24px rgba(0, 0, 0, .5);
     --pop-lg:       0 2px 4px rgba(0, 0, 0, .5), 0 24px 56px rgba(0, 0, 0, .6);
@@ -107,15 +267,19 @@ body {
     background: var(--bg);
     color: var(--ink);
     font-family: var(--font);
-    font-size: 14px;
-    line-height: 1.55;
-    font-feature-settings: 'cv05' 1, 'cv08' 1;
+    font-size: var(--fs-md);
+    line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
 }
 
-h1, h2, h3, h4 { margin: 0; font-weight: 600; line-height: 1.25; letter-spacing: -.015em; }
-p { margin: 0 0 8px; }
+h1, h2, h3, h4 {
+    margin: 0;
+    font-weight: var(--fw-bold);
+    line-height: 1.25;
+    letter-spacing: -.015em;
+}
+p { margin: 0 0 var(--s2); }
 p:last-child { margin-bottom: 0; }
 
 a { color: var(--accent); text-decoration: none; }
@@ -158,11 +322,11 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
 }
 
 .skip {
-    position: absolute; top: -60px; left: 12px; z-index: 300;
-    padding: 8px 14px; border-radius: var(--r-sm);
-    background: var(--ink); color: var(--surface); font-size: 13px;
+    position: absolute; top: -60px; left: var(--s3); z-index: var(--z-skip);
+    padding: var(--s2) var(--s4); border-radius: var(--r-sm);
+    background: var(--accent); color: var(--on-accent); font-size: var(--fs-md);
 }
-.skip:focus { top: 12px; text-decoration: none; }
+.skip:focus { top: var(--s3); text-decoration: none; }
 
 /* Kaydırma çubuğu */
 * { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
@@ -181,15 +345,20 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
 
 .shell { display: flex; min-height: 100vh; }
 
+/*
+ * Çerçeve: alet. Kenar çubuğu ve komut şeridi her iki temada koyu kalır —
+ * çalışma yüzeyiyle arasındaki ton farkı panelin tanınır biçimini verir.
+ */
 .side {
     position: fixed;
     inset: 0 auto 0 0;
     width: var(--side-w);
     display: flex;
     flex-direction: column;
-    background: var(--surface);
-    border-right: 1px solid var(--line);
-    z-index: 60;
+    background: var(--frame);
+    border-right: 1px solid var(--frame-line);
+    color: var(--frame-ink);
+    z-index: var(--z-side);
 }
 
 .main {
@@ -200,13 +369,20 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
     flex-direction: column;
 }
 
+/*
+ * Liste ekranları TAM GENİŞLİK. 0.2.0'da her ekran 1120px ile sınırlıydı;
+ * 1440px'lik bir ekranda iki yanda ölü alan kalıyordu ve yoğun bir liste
+ * aracında bu doğrudan kaybedilmiş bilgi demek.
+ *
+ * Ölçü sınırı okuma ve form yüzeylerine taşındı: .content.is-narrow.
+ */
 .content {
     flex: 1;
     width: 100%;
-    max-width: 1120px;
-    padding: 28px 32px 64px;
+    padding: var(--s5) var(--s5) var(--s8);
 }
-.content.is-wide { max-width: 1440px; }
+.content.is-narrow { max-width: 940px; }
+.content.is-wide { max-width: none; }
 
 /* -------------------------------------------------------------------------
    4. Kenar çubuğu
@@ -217,47 +393,55 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
     flex: none;
     display: flex;
     align-items: center;
-    padding: 0 16px;
-    border-bottom: 1px solid var(--line);
+    padding: 0 var(--s3);
+    border-bottom: 1px solid var(--frame-line);
 }
 
-.logo { display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--ink); }
+.logo {
+    display: flex; align-items: center; gap: var(--s2);
+    min-width: 0; color: var(--frame-ink-hi);
+}
 .logo:hover { text-decoration: none; }
 
 .logo-mark {
     flex: none;
-    width: 26px; height: 26px;
+    width: 22px; height: 22px;
     display: grid; place-items: center;
     border-radius: var(--r-sm);
     background: var(--accent);
     color: var(--on-accent);
-    font-size: 11.5px;
-    font-weight: 600;
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-bold);
     letter-spacing: -.02em;
 }
 
 .logo-text { min-width: 0; }
 .logo-text strong {
     display: block;
-    font-size: 13.5px;
-    font-weight: 550;
+    font-size: var(--fs-md);
+    font-weight: var(--fw-mid);
     letter-spacing: -.01em;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.logo-text span { display: block; font-size: 11px; color: var(--ink-3); }
+.logo-text span {
+    display: block;
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    color: var(--frame-ink-2);
+}
 
-.side-nav { flex: 1; overflow-y: auto; padding: 12px 10px 20px; }
+.side-nav { flex: 1; overflow-y: auto; padding: var(--s2) var(--s1) var(--s4) var(--s2); }
 
 .nav-group {
-    margin: 20px 8px 6px;
-    font-size: 11px;
-    font-weight: 550;
-    letter-spacing: .04em;
-    color: var(--ink-3);
+    margin: var(--s3) var(--s2) var(--s1);
+    font-size: var(--fs-micro);
+    font-weight: var(--fw-mid);
+    letter-spacing: .03em;
+    color: var(--frame-ink-2);
 }
-.nav-group:first-child { margin-top: 4px; }
+.nav-group:first-child { margin-top: var(--s1); }
 
 .nav-list { list-style: none; margin: 0; padding: 0; }
 
@@ -265,63 +449,87 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
     position: relative;
     display: flex;
     align-items: center;
-    gap: 9px;
-    padding: 7px 9px;
+    gap: var(--s2);
+    height: 26px;
+    padding: 0 var(--s2);
     border-radius: var(--r-sm);
-    color: var(--ink-2);
-    font-size: 13.5px;
-    font-weight: 450;
-    transition: background .12s var(--ease), color .12s var(--ease);
+    color: var(--frame-ink);
+    font-size: var(--fs);
+    font-weight: var(--fw);
+    transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
 }
-.nav-link:hover { background: var(--surface-2); color: var(--ink); text-decoration: none; }
+.nav-link:hover { background: var(--frame-hover); color: var(--frame-ink-hi); text-decoration: none; }
 .nav-link > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .nav-link.is-active {
-    background: var(--accent-soft);
-    color: var(--accent);
-    font-weight: 500;
+    background: var(--frame-active);
+    color: var(--frame-ink-hi);
+    font-weight: var(--fw-mid);
 }
 /* Sessiz vurgu: etkin öğede 2px iç şerit */
 .nav-link.is-active::before {
     content: '';
     position: absolute;
-    left: -10px; top: 50%;
-    width: 2px; height: 18px;
-    margin-top: -9px;
+    left: calc(var(--s2) * -1); top: var(--s1); bottom: var(--s1);
+    width: 2px;
     border-radius: 0 2px 2px 0;
     background: var(--accent);
 }
 
 .nav-badge {
     flex: none;
-    min-width: 18px;
-    padding: 0 5px;
-    border-radius: var(--r-pill);
-    background: var(--surface-2);
-    color: var(--ink-2);
-    font-size: 10.5px;
+    min-width: 16px;
+    padding: 0 var(--s1);
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--frame-ink-2);
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
     font-style: normal;
-    font-weight: 600;
+    font-weight: var(--fw);
     font-variant-numeric: tabular-nums;
     text-align: center;
 }
-.nav-badge.is-alert { background: var(--err-soft); color: var(--err); }
+.nav-badge.is-alert { background: var(--err-soft); color: var(--err); font-weight: var(--fw-bold); }
 
-.side-foot { flex: none; padding: 10px; border-top: 1px solid var(--line); }
+.side-foot { flex: none; padding: var(--s1); border-top: 1px solid var(--frame-line); }
 
 .side-site {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 7px 9px;
+    gap: var(--s2);
+    height: 26px;
+    padding: 0 var(--s2);
     border-radius: var(--r-sm);
-    color: var(--ink-3);
-    font-size: 12.5px;
+    color: var(--frame-ink-2);
+    font-size: var(--fs);
 }
-.side-site:hover { background: var(--surface-2); color: var(--ink-2); text-decoration: none; }
+.side-site:hover { background: var(--frame-hover); color: var(--frame-ink); text-decoration: none; }
+
+/* Sürüm ve etkin tema: kaldırılan alt bilgi şeridinden buraya indi. */
+.side-build {
+    margin: var(--s1) 0 0;
+    padding: 0 var(--s2);
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    color: var(--frame-ink-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 
 /* -------------------------------------------------------------------------
-   5. Üst çubuk
+   5. Komut şeridi
+   -------------------------------------------------------------------------
+   İMZA ÖĞE. Bu bir üst çubuk değil; panelin en hızlı giriş yolu ve durum
+   bildiricisi. Üç iş yapar:
+     1. Nerede olduğunuzu söyler (.bar-crumb).
+     2. Yazınca komut paletine dönüşür (.bar-search — gizli ⌘K penceresi değil,
+        sürekli görünür bir alan).
+     3. Ne yaptığını anlık bildirir (.bar-activity: "Kaydedildi 14:12").
+
+   Panelin hızlı HİSSETMESİNİN yarısı üçüncü maddeden geliyor: iş bittiğinde
+   söylemek, işi hızlandırmak kadar etkili.
    ---------------------------------------------------------------------- */
 
 .bar {
@@ -331,49 +539,104 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
     flex: none;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 0 16px 0 12px;
-    background: var(--bg);
-    border-bottom: 1px solid var(--line);
-    z-index: 50;
+    gap: var(--s2);
+    padding: 0 var(--s3);
+    background: var(--frame);
+    border-bottom: 1px solid var(--frame-line);
+    color: var(--frame-ink);
+    z-index: var(--z-bar);
 }
 
 .bar-gap { flex: 1; }
 
+/* Konum yolu: kırıntı değil, bulunduğunuz yerin adı. */
+.bar-crumb {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    min-width: 0;
+    font-size: var(--fs);
+    color: var(--frame-ink-2);
+}
+.bar-crumb a { color: var(--frame-ink); }
+.bar-crumb a:hover { color: var(--frame-ink-hi); text-decoration: none; }
+.bar-crumb strong {
+    font-weight: var(--fw-mid);
+    color: var(--frame-ink-hi);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.bar-crumb .sep { color: var(--frame-ink-2); opacity: .6; }
+
 .bar-search {
     position: relative;
-    flex: 0 1 300px;
+    flex: 0 1 340px;
     display: flex;
     align-items: center;
 }
 .bar-search .ico {
     position: absolute;
-    left: 10px;
-    color: var(--ink-3);
+    left: var(--s2);
+    color: var(--frame-ink-2);
     pointer-events: none;
 }
 .bar-search input {
     width: 100%;
-    height: 32px;
-    padding: 0 10px 0 32px;
-    border: 1px solid transparent;
+    height: var(--h-ctl);
+    padding: 0 44px 0 28px;
+    border: 1px solid var(--frame-line);
     border-radius: var(--r-sm);
-    background: var(--surface-2);
-    color: var(--ink);
+    background: var(--frame-2);
+    color: var(--frame-ink-hi);
     font: inherit;
-    font-size: 13px;
+    font-size: var(--fs);
 }
-.bar-search input::placeholder { color: var(--ink-3); }
+.bar-search input::placeholder { color: var(--frame-ink-2); }
+.bar-search input:hover { border-color: #3a3742; }
 .bar-search input:focus {
     outline: none;
-    background: var(--surface);
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-ring);
 }
+/* Kısayol ipucu: keşfedilebilir olmalı, yoksa klavye önceliği işe yaramaz. */
+.bar-key {
+    position: absolute;
+    right: var(--s2);
+    padding: 1px var(--s1);
+    border: 1px solid var(--frame-line);
+    border-radius: var(--r-xs);
+    color: var(--frame-ink-2);
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    pointer-events: none;
+}
+.bar-search input:focus ~ .bar-key { opacity: 0; }
+
+/* Canlı durum: otomatik kayıt, kısmi güncelleme, arka plan işi. */
+.bar-activity {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    font-size: var(--fs-sm);
+    color: var(--frame-ink-2);
+    white-space: nowrap;
+}
+.bar-activity .live {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--st-published);
+    flex: none;
+}
+.bar-activity.is-busy .live { background: var(--st-scheduled); animation: pulse 1s ease-in-out infinite; }
+.bar-activity.is-err .live { background: var(--err); }
+.bar-activity.is-err { color: var(--err); }
+
+@keyframes pulse { 50% { opacity: .3; } }
 
 .icon-btn {
     flex: none;
-    width: 32px; height: 32px;
+    width: var(--h-ctl); height: var(--h-ctl);
     display: grid; place-items: center;
     padding: 0;
     border: 0;
@@ -381,44 +644,53 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
     background: transparent;
     color: var(--ink-2);
     cursor: pointer;
-    transition: background .12s var(--ease), color .12s var(--ease);
+    transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
 }
 .icon-btn:hover { background: var(--surface-2); color: var(--ink); }
+
+/* Çerçeve içindeki denetimler çerçeve rengini alır. */
+.bar .icon-btn { color: var(--frame-ink); }
+.bar .icon-btn:hover { background: var(--frame-hover); color: var(--frame-ink-hi); }
 
 .user-btn {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 3px 8px 3px 3px;
+    gap: var(--s2);
+    height: var(--h-ctl);
+    padding: 0 var(--s2) 0 var(--s1);
     border: 0;
-    border-radius: var(--r-pill);
+    border-radius: var(--r-sm);
     background: transparent;
-    color: var(--ink);
+    color: var(--frame-ink-hi);
     font: inherit;
     cursor: pointer;
 }
-.user-btn:hover { background: var(--surface-2); }
-.user-btn .ico { color: var(--ink-3); }
-.user-meta { text-align: left; line-height: 1.2; }
-.user-meta strong { display: block; font-size: 12.5px; font-weight: 500; }
-.user-meta small { display: block; font-size: 11px; color: var(--ink-3); }
+.user-btn:hover { background: var(--frame-hover); }
+.user-btn .ico { color: var(--frame-ink-2); }
+.user-meta { text-align: left; line-height: 1.15; }
+.user-meta strong { display: block; font-size: var(--fs-sm); font-weight: var(--fw-mid); }
+.user-meta small { display: block; font-size: var(--fs-micro); color: var(--frame-ink-2); }
 
 .avatar {
     flex: none;
-    width: 26px; height: 26px;
+    width: 21px; height: 21px;
     display: grid; place-items: center;
-    border-radius: var(--r-pill);
-    background: var(--accent-soft);
-    color: var(--accent);
-    font-size: 10.5px;
-    font-weight: 600;
+    border-radius: var(--r-sm);
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 9.5px;
+    font-weight: var(--fw-bold);
     letter-spacing: .01em;
     text-transform: uppercase;
     user-select: none;
 }
-.avatar-md { width: 34px; height: 34px; font-size: 12.5px; }
-.avatar-lg { width: 44px; height: 44px; font-size: 15px; }
-.avatar-xl { width: 68px; height: 68px; font-size: 22px; }
+/*
+ * .avatar-md ve .avatar-xl düz metin aramada ÖLÜ görünür; ui_avatar()
+ * (admin/includes/ui.php:391) 'avatar-' . $size biçiminde birleştiriyor.
+ * Silinirse users.php ve profile.php sessizce bozulur.
+ */
+.avatar-md { width: 28px; height: 28px; font-size: var(--fs-xs); border-radius: var(--r); }
+.avatar-xl { width: 56px; height: 56px; font-size: var(--fs-xl); border-radius: var(--r-lg); }
 
 /* -------------------------------------------------------------------------
    6. Açılır menü
@@ -471,59 +743,81 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
 
 .page-head {
     display: flex;
-    align-items: flex-end;
-    gap: 16px;
+    align-items: center;
+    gap: var(--s3);
     flex-wrap: wrap;
-    margin-bottom: 24px;
+    margin-bottom: var(--s4);
 }
-.page-head > div:first-child { flex: 1; min-width: 260px; }
+.page-head > div:first-child { flex: 1; min-width: 220px; }
 
 .crumbs {
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-bottom: 5px;
-    font-size: 12px;
+    gap: var(--s1);
+    margin-bottom: 2px;
+    font-size: var(--fs-xs);
     color: var(--ink-3);
 }
 .crumbs a { color: var(--ink-3); }
 .crumbs a:hover { color: var(--accent); text-decoration: none; }
 
-.page-title { font-size: 22px; font-weight: 600; letter-spacing: -.025em; }
-.page-desc { margin: 6px 0 0; color: var(--ink-2); max-width: 72ch; font-size: 13.5px; }
+.page-title {
+    font-size: var(--fs-title);
+    font-weight: var(--fw-bold);
+    letter-spacing: -.02em;
+}
+/* Sayaç başlığın yanında: yoğun araçta kaç kayıt olduğu birincil bilgi. */
+.page-title .count {
+    margin-left: var(--s2);
+    font-family: var(--mono);
+    font-size: var(--fs-sm);
+    font-weight: var(--fw);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-3);
+    letter-spacing: 0;
+}
+.page-desc { margin: 3px 0 0; color: var(--ink-2); max-width: 76ch; font-size: var(--fs); }
 
-.page-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.page-actions { display: flex; align-items: center; gap: var(--s1); flex-wrap: wrap; }
 
 /* -------------------------------------------------------------------------
    8. Düğmeler
    ---------------------------------------------------------------------- */
 
+/*
+ * Denetim yükseklikleri TEK tokenden gelir. 0.2.0'da .btn 34px, .input ise
+ * hesaplanan 39px'ti (8px dolgu + 13.5px metin + kenarlık) — aynı satırda
+ * dikey hizalanmıyorlardı. Artık ikisi de --h-ctl.
+ */
 .btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 7px;
-    height: 34px;
-    padding: 0 13px;
+    gap: var(--s1);
+    height: var(--h-ctl);
+    padding: 0 var(--s3);
     border: 1px solid var(--line-strong);
     border-radius: var(--r-sm);
     background: var(--surface);
     color: var(--ink);
     font: inherit;
-    font-size: 13px;
-    font-weight: 450;
+    font-size: var(--fs);
+    font-weight: var(--fw-mid);
     white-space: nowrap;
     cursor: pointer;
-    transition: background .12s var(--ease), border-color .12s var(--ease), color .12s var(--ease);
+    transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease),
+                color var(--fast) var(--ease);
 }
 .btn:hover { background: var(--surface-2); text-decoration: none; }
 .btn:disabled, .btn.is-off { opacity: .5; pointer-events: none; }
+/* İş sürerken düğme kilitlenir ve söyler; sessiz bekleme yavaş hissettirir. */
+.btn.is-busy { pointer-events: none; opacity: .7; }
 
 .btn-primary {
     background: var(--accent);
     border-color: var(--accent);
     color: var(--on-accent);
-    font-weight: 500;
+    font-weight: var(--fw-mid);
 }
 .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--on-accent); }
 
@@ -533,11 +827,25 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
 .btn-danger { color: var(--err); border-color: var(--line-strong); }
 .btn-danger:hover { background: var(--err-soft); border-color: color-mix(in srgb, var(--err) 40%, transparent); }
 
-.btn-sm { height: 29px; padding: 0 10px; font-size: 12.5px; }
-.btn-lg { height: 40px; padding: 0 18px; font-size: 14px; }
+.btn-sm { height: var(--h-ctl-sm); padding: 0 var(--s2); font-size: var(--fs-sm); }
+.btn-lg { height: var(--h-ctl-lg); padding: 0 var(--s4); font-size: var(--fs-md); }
+
+/* Düğme içindeki kısayol ipucu — klavye önceliğini keşfedilebilir yapar. */
+.btn .kbd {
+    padding: 0 3px;
+    border: 1px solid currentColor;
+    border-radius: var(--r-xs);
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    opacity: .55;
+}
 .btn-block { width: 100%; }
-.btn-icon { width: 34px; padding: 0; }
-.btn-sm.btn-icon { width: 29px; }
+
+/*
+ * .btn-icon KALDIRILDI: canlı olan .icon-btn ile aynı işi yapan, hiçbir yerde
+ * kullanılmayan bir kopyaydı. İki benzer ad, yanlışını seçmeyi kolaylaştırıyor.
+ * Kare ikon düğmesi için .icon-btn kullanılır.
+ */
 
 .btn-set { display: inline-flex; }
 .btn-set .btn { border-radius: 0; margin-left: -1px; }
@@ -549,55 +857,72 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
    9. Panel kutusu
    ---------------------------------------------------------------------- */
 
+/*
+ * overflow: hidden KALDIRILDI. 0.2.0'da yuvarlak köşeleri kırpmak için
+ * konmuştu ama iki şeyi imkânsız kılıyordu: (1) tablo başlığının
+ * position:sticky ile üstte durması, (2) panel içinde açılan .menu-pop'un
+ * görünmesi — açılır menüler panel sınırında kırpılıyordu.
+ *
+ * Yerine köşe kırpma yalnızca ilk/son çocuğa uygulanıyor.
+ */
 .panel {
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--r);
-    overflow: hidden;
 }
-.panel + .panel, .panel + .metrics, .metrics + .panel { margin-top: 18px; }
-.panel-pad { padding: 24px; }
+.panel > :first-child { border-radius: var(--r) var(--r) 0 0; }
+.panel > :last-child { border-radius: 0 0 var(--r) var(--r); }
+.panel > :only-child { border-radius: var(--r); }
+.panel + .panel, .panel + .metrics, .metrics + .panel { margin-top: var(--s3); }
+.panel-pad { padding: var(--s4); }
 
 .panel-head {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--s2);
     flex-wrap: wrap;
-    padding: 14px 20px;
+    padding: var(--s2) var(--s3);
     border-bottom: 1px solid var(--line);
 }
 .panel-head > div:first-child { flex: 1; min-width: 0; }
-.panel-title { font-size: 14.5px; font-weight: 550; letter-spacing: -.01em; }
-.panel-sub { margin: 2px 0 0; font-size: 12.5px; color: var(--ink-3); }
-.panel-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.panel-title { font-size: var(--fs-md); font-weight: var(--fw-bold); letter-spacing: -.01em; }
+.panel-sub { margin: 1px 0 0; font-size: var(--fs-sm); color: var(--ink-3); }
+.panel-actions { display: flex; align-items: center; gap: var(--s1); flex-wrap: wrap; }
 
-.panel-body { padding: 20px; }
-.panel-body.is-tight { padding: 14px 16px; }
+.panel-body { padding: var(--s3); }
+.panel-body.is-tight { padding: var(--s2) var(--s3); }
+/* Tablo taşıyan panelde gövde dolgusu olmaz; tablo kenara dayanır. */
+.panel-body.is-flush { padding: 0; }
 
 .panel-foot {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--s2);
     flex-wrap: wrap;
-    padding: 13px 20px;
+    padding: var(--s2) var(--s3);
     border-top: 1px solid var(--line);
     background: var(--surface-2);
 }
 
 /* Yerleşim ızgaraları */
-.grid { display: grid; gap: 18px; }
+.grid { display: grid; gap: var(--s3); }
 .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.cols-main { display: grid; grid-template-columns: minmax(0, 1fr) 312px; gap: 18px; align-items: start; }
-.cols-editor { display: grid; grid-template-columns: minmax(0, 1fr) 288px; gap: 18px; align-items: start; }
+.cols-main { display: grid; grid-template-columns: minmax(0, 1fr) 288px; gap: var(--s3); align-items: start; }
+.cols-editor { display: grid; grid-template-columns: minmax(0, 1fr) 268px; gap: var(--s3); align-items: start; }
 
 /* -------------------------------------------------------------------------
    10. Metrik şeridi (imza öğe)
    ---------------------------------------------------------------------- */
 
+/*
+ * Kolon sayısı SABİT DEĞİL. 0.2.0'da repeat(4, ...) yazılıydı ama ui_metrics()
+ * 3 öğeyle (index.php) ve 5 öğeyle (system.php) de çağrılıyor; her iki durumda
+ * düzen bozuluyordu. auto-fit ile öğe sayısı kaç olursa olsun oturuyor.
+ */
 .metrics {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--r);
@@ -605,33 +930,33 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
 }
 
 .metric {
-    padding: 16px 20px;
+    padding: var(--s3);
     border-left: 1px solid var(--line);
     color: var(--ink);
-    transition: background .12s var(--ease);
+    transition: background var(--fast) var(--ease);
 }
 .metric:first-child { border-left: 0; }
 a.metric:hover { background: var(--surface-2); text-decoration: none; }
 
 .metric-label {
     display: block;
-    font-size: 12px;
-    font-weight: 450;
+    font-size: var(--fs-xs);
+    font-weight: var(--fw);
     color: var(--ink-3);
 }
 .metric-value {
     display: block;
-    margin-top: 3px;
-    font-size: 24px;
-    font-weight: 600;
-    letter-spacing: -.035em;
+    margin-top: 1px;
+    font-size: var(--fs-metric);
+    font-weight: var(--fw-bold);
+    letter-spacing: -.03em;
     font-variant-numeric: tabular-nums;
     line-height: 1.15;
 }
 .metric-note {
     display: block;
-    margin-top: 2px;
-    font-size: 12px;
+    margin-top: 1px;
+    font-size: var(--fs-xs);
     color: var(--ink-3);
 }
 
@@ -644,60 +969,122 @@ a.metric:hover { background: var(--surface-2); text-decoration: none; }
 table.data {
     width: 100%;
     border-collapse: collapse;
-    font-size: 13px;
+    font-size: var(--fs);
 }
+
+/*
+ * Yapışkan başlık: uzun listelerde kolon adları kaybolmaz. .panel'in
+ * overflow:hidden kuralı kaldırıldığı için artık mümkün.
+ */
 table.data th {
-    padding: 9px 16px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    height: var(--row-head);
+    padding: 0 var(--s2);
     border-bottom: 1px solid var(--line);
-    color: var(--ink-3);
-    font-size: 11.5px;
-    font-weight: 550;
-    letter-spacing: .02em;
+    color: var(--ink-2);
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-bold);
+    letter-spacing: .01em;
     text-align: left;
     white-space: nowrap;
-    background: var(--surface);
+    background: var(--surface-2);
 }
+
+/*
+ * Satır TEK SATIR ve sabit yükseklikte. 0.2.0'da dolgu 11px + iki satırlık
+ * hücre içeriği satırı 63–105px'e çıkarıyordu; bir ekrana yalnızca üç kayıt
+ * sığıyordu. Taşan metin kırpılır — yoğun bir listede sarma, taramayı bitirir.
+ */
 table.data td {
-    padding: 11px 16px;
+    height: var(--row);
+    padding: 0 var(--s2);
     border-bottom: 1px solid var(--line);
     vertical-align: middle;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 0;
 }
 table.data tbody tr:last-child td { border-bottom: 0; }
-table.data tbody tr { transition: background .1s var(--ease); }
-table.data tbody tr:hover { background: var(--surface-2); }
+/* Vurgu geçişsiz: anlık tepki hızlı hissettirir. */
+table.data tbody tr:hover > td { background: var(--surface-2); }
+table.data tbody tr[aria-selected="true"] > td { background: var(--accent-soft); }
 
-table.data .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
-table.data .fit { width: 1%; white-space: nowrap; }
-table.data .pick { width: 36px; padding-right: 0; }
+table.data .num {
+    text-align: right;
+    font-family: var(--mono);
+    font-size: var(--fs-sm);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-2);
+}
+table.data .fit { width: 1%; white-space: nowrap; max-width: none; }
+table.data .pick { width: 30px; padding-right: 0; max-width: none; }
+/* Tarih ve saat kolonu: monospace + tabular, göz dikey tarar. */
+table.data .when {
+    font-family: var(--mono);
+    font-size: var(--fs-sm);
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-3);
+}
+
+/*
+ * DURUM = SATIRIN SOL KENARI. Dolgulu etiket yerine 2px'lik bir şerit.
+ * Satırın rengi listeyi taramanın en hızlı yolu; etiket ise yer yer.
+ */
+table.data td.edge { position: relative; }
+table.data td.edge::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 2px;
+    background: var(--st-draft);
+}
+tr[data-status="published"] td.edge::before { background: var(--st-published); }
+tr[data-status="draft"]     td.edge::before { background: var(--st-draft); }
+tr[data-status="scheduled"] td.edge::before { background: var(--st-scheduled); }
+tr[data-status="pending"]   td.edge::before { background: var(--st-review); }
+tr[data-status="trash"]     td.edge::before { background: var(--st-trash); }
 
 .cell-title {
-    display: block;
-    font-size: 13.5px;
-    font-weight: 500;
+    font-size: var(--fs);
+    font-weight: var(--fw-mid);
     color: var(--ink);
     letter-spacing: -.005em;
 }
 .cell-title:hover { color: var(--accent); text-decoration: none; }
-.cell-sub { display: block; margin-top: 1px; font-size: 11.5px; color: var(--ink-3); }
+/*
+ * Alt bilgi artık ALT SATIRA GEÇMEZ, başlığın yanında durur. Başlık + kalıcı
+ * bağlantıyı alt alta basmak 0.2.0'da satır yüksekliğini iki katına çıkarıyordu.
+ */
+.cell-sub {
+    margin-left: var(--s2);
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    color: var(--ink-4);
+}
 
-.cell-person { display: flex; align-items: center; gap: 8px; }
-.cell-person strong { display: block; font-size: 13px; font-weight: 500; }
-.cell-person small { display: block; font-size: 11.5px; color: var(--ink-3); }
+.cell-person { display: flex; align-items: center; gap: var(--s1); min-width: 0; }
+.cell-person strong { font-size: var(--fs); font-weight: var(--fw); color: var(--ink-2); }
+.cell-person small { font-size: var(--fs-xs); color: var(--ink-3); }
 
-.row-acts { display: flex; gap: 2px; justify-content: flex-end; opacity: 0; transition: opacity .1s var(--ease); }
+.row-acts { display: flex; gap: 1px; justify-content: flex-end; opacity: 0; }
 tr:hover .row-acts, tr:focus-within .row-acts { opacity: 1; }
 @media (hover: none) { .row-acts { opacity: 1; } }
+.row-acts .icon-btn { width: var(--h-ctl-sm); height: var(--h-ctl-sm); }
 
 /* Toplu işlem çubuğu */
 .bulk {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--s2);
     flex-wrap: wrap;
-    padding: 10px 16px;
+    padding: var(--s1) var(--s2);
     border-bottom: 1px solid var(--line);
-    background: var(--surface-2);
-    font-size: 12.5px;
+    background: var(--accent-soft);
+    color: var(--accent-ink);
+    font-size: var(--fs-sm);
 }
 .bulk strong { font-variant-numeric: tabular-nums; }
 
@@ -705,9 +1092,9 @@ tr:hover .row-acts, tr:focus-within .row-acts { opacity: 1; }
 .filters {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--s1);
     flex-wrap: wrap;
-    padding: 12px 16px;
+    padding: var(--s2);
     border-bottom: 1px solid var(--line);
 }
 
@@ -725,7 +1112,7 @@ tr:hover .row-acts, tr:focus-within .row-acts { opacity: 1; }
     border-radius: var(--r-sm);
     color: var(--ink-2);
     font-size: 13px;
-    font-weight: 450;
+    font-weight: var(--fw-mid);
 }
 .tab:hover { background: var(--surface-2); color: var(--ink); text-decoration: none; }
 .tab.is-active { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
@@ -826,7 +1213,7 @@ tr:hover .row-acts, tr:focus-within .row-acts { opacity: 1; }
     font-variant-numeric: tabular-nums;
 }
 .pager-link:hover { background: var(--surface-2); color: var(--ink); text-decoration: none; }
-.pager-link.is-current { background: var(--accent-soft); color: var(--accent); font-weight: 550; }
+.pager-link.is-current { background: var(--accent-soft); color: var(--accent); font-weight: var(--fw-bold); }
 .pager-link.is-off { opacity: .35; pointer-events: none; }
 .pager-gap { color: var(--ink-4); padding: 0 2px; }
 
@@ -834,33 +1221,40 @@ tr:hover .row-acts, tr:focus-within .row-acts { opacity: 1; }
    13. Form öğeleri
    ---------------------------------------------------------------------- */
 
-.field { margin-bottom: 16px; }
+.field { margin-bottom: var(--s3); }
 .field:last-child { margin-bottom: 0; }
-.field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
 
 .label {
     display: block;
-    margin-bottom: 5px;
-    font-size: 12.5px;
-    font-weight: 500;
-    color: var(--ink);
+    margin-bottom: 3px;
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-mid);
+    color: var(--ink-2);
 }
 .label .req { color: var(--err); }
-.label .opt { color: var(--ink-3); font-weight: 400; }
+/* .label .opt: ui_field() isteğe bağlı alanlarda basıyor. */
+.label .opt { color: var(--ink-3); font-weight: var(--fw); }
 
-.hint { margin: 5px 0 0; font-size: 12px; color: var(--ink-3); line-height: 1.5; }
+.hint { margin: 3px 0 0; font-size: var(--fs-xs); color: var(--ink-3); line-height: 1.45; }
 .hint.is-err { color: var(--err); }
 
+/*
+ * Yükseklik .btn ile AYNI tokenden. 0.2.0'da dolgu+font+kenarlık toplamı
+ * ~39px veriyordu, .btn ise 34px'ti; yan yana duran girdi ve düğme
+ * hizalanmıyordu.
+ */
 .input {
     width: 100%;
-    padding: 8px 11px;
+    height: var(--h-ctl);
+    padding: 0 var(--s2);
     border: 1px solid var(--line-strong);
     border-radius: var(--r-sm);
     background: var(--surface);
     color: var(--ink);
     font: inherit;
-    font-size: 13.5px;
-    transition: border-color .12s var(--ease), box-shadow .12s var(--ease);
+    font-size: var(--fs);
+    transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
 }
 .input::placeholder { color: var(--ink-3); }
 .input:focus {
@@ -869,28 +1263,38 @@ tr:hover .row-acts, tr:focus-within .row-acts { opacity: 1; }
     box-shadow: 0 0 0 3px var(--accent-ring);
 }
 .input[readonly] { background: var(--surface-2); color: var(--ink-2); }
-textarea.input { min-height: 92px; resize: vertical; line-height: 1.6; }
-textarea.mono { font-family: var(--mono); font-size: 12.5px; }
+/* Çok satırlı alanda sabit yükseklik geçersiz. */
+textarea.input {
+    height: auto;
+    min-height: 72px;
+    padding: var(--s2);
+    resize: vertical;
+    line-height: 1.55;
+}
+textarea.mono { font-family: var(--mono); font-size: var(--fs-sm); }
 
 .select {
     appearance: none;
-    padding-right: 32px;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238c8c96' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    padding-right: 26px;
+    /* Ok rengi currentColor değil sabit olmak zorunda (data URI); her iki
+       temada okunur bir orta gri seçildi. */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b8794' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
-    background-position: right 10px center;
+    background-position: right var(--s2) center;
 }
 .select.w-auto { width: auto; }
 
 .input-group { display: flex; }
 .input-group .addon {
     display: flex; align-items: center;
-    padding: 0 10px;
+    height: var(--h-ctl);
+    padding: 0 var(--s2);
     border: 1px solid var(--line-strong);
     border-right: 0;
     border-radius: var(--r-sm) 0 0 var(--r-sm);
     background: var(--surface-2);
     color: var(--ink-3);
-    font-size: 12.5px;
+    font-size: var(--fs-sm);
     white-space: nowrap;
 }
 .input-group .addon + .input { border-radius: 0 var(--r-sm) var(--r-sm) 0; }
@@ -1142,7 +1546,7 @@ textarea.mono { font-family: var(--mono); font-size: 12.5px; }
 .media-meta strong {
     display: block;
     font-size: 12px;
-    font-weight: 450;
+    font-weight: var(--fw-mid);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1263,7 +1667,7 @@ textarea.mono { font-family: var(--mono); font-size: 12.5px; }
     background: var(--surface-2);
     color: var(--ink-3);
     font-size: 10.5px;
-    font-weight: 550;
+    font-weight: var(--fw-bold);
 }
 
 /* -------------------------------------------------------------------------
@@ -1306,39 +1710,283 @@ textarea.mono { font-family: var(--mono); font-size: 12.5px; }
 }
 .slug-row .slug-input:focus { outline: none; border-color: var(--accent); border-style: solid; }
 
-.blocks { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+/*
+ * Blok kabuğu SOL OLUĞA çekildi.
+ *
+ * 0.2.0'da her blokta 41px'lik bir yönetim çubuğu vardı: tutamak, tür adı,
+ * beş düğme. Bir paragraf bloğu 275px yer kaplıyordu ve tek bir yazı 3340px —
+ * 4,6 ekran — kaydırma gerektiriyordu. Yazarken görülen şey içerik değil,
+ * kutu kenarlarıydı.
+ *
+ * Artık çubuk yok. Kart çerçevesi de yok. Blok, metnin doğal yüksekliğinde
+ * duruyor; tutamak ve tür simgesi sol olukta ve YALNIZCA imleç blokta ya da
+ * içindeyken görünüyor. Denetimler sağ üstte, aynı koşulla.
+ */
+.blocks {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s1);
+    margin-top: var(--s3);
+    /* Sol oluk için yer: tutamak içeriğin dışında durur. */
+    padding-left: 30px;
+}
 
 .block {
-    border: 1px solid var(--line);
+    position: relative;
+    border: 1px solid transparent;
     border-radius: var(--r-sm);
-    background: var(--surface);
+    background: transparent;
+    transition: border-color var(--fast) var(--ease);
 }
+.block:focus-within { border-color: var(--line); }
 .block.is-dragging { opacity: .45; }
 .block.is-over { border-color: var(--accent); }
 
+/* Oluk: sürükleme tutamağı + tür simgesi. */
 .block-bar {
+    position: absolute;
+    left: -30px; top: 2px;
+    width: 26px;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 8px;
-    padding: 7px 10px;
-    border-bottom: 1px solid var(--line);
-    background: var(--surface-2);
-    border-radius: var(--r-sm) var(--r-sm) 0 0;
+    gap: 1px;
+    opacity: 0;
+    transition: opacity var(--fast) var(--ease);
 }
-.block-bar .grip { color: var(--ink-4); cursor: grab; display: grid; place-items: center; }
-.block-kind {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--ink-2);
-}
-.block-bar .spacer { flex: 1; }
-.block-bar .icon-btn { width: 26px; height: 26px; }
+.block:hover > .block-bar,
+.block:focus-within > .block-bar { opacity: 1; }
 
-.block-body { padding: 12px; display: grid; gap: 12px; }
+.block-bar .grip {
+    color: var(--ink-4);
+    cursor: grab;
+    display: grid;
+    place-items: center;
+    width: 20px; height: 18px;
+    border-radius: var(--r-xs);
+}
+.block-bar .grip:hover { background: var(--surface-2); color: var(--ink-2); }
+
+/* Tür adı olukta sığmaz: yalnızca simge kalır, ad başlık ipucunda. */
+.block-kind {
+    display: grid;
+    place-items: center;
+    width: 20px; height: 18px;
+    border-radius: var(--r-xs);
+    color: var(--ink-4);
+    font-size: var(--fs-micro);
+    overflow: hidden;
+}
+.block-kind > span { display: none; }
+
+.block-bar .spacer { display: none; }
+
+/* Blok denetimleri: sağ üstte, imleç blokta olduğunda. */
+.block-acts {
+    position: absolute;
+    right: 2px; top: 2px;
+    display: flex;
+    gap: 1px;
+    padding: 2px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--surface);
+    opacity: 0;
+    transition: opacity var(--fast) var(--ease);
+}
+.block:hover > .block-acts,
+.block:focus-within > .block-acts { opacity: 1; }
+
+.block-acts .icon-btn {
+    width: 20px; height: 18px;
+    color: var(--ink-3);
+}
+.block-acts .icon-btn:hover { background: var(--surface-2); color: var(--ink); }
+
+@media (hover: none) {
+    .block-bar, .block-acts { opacity: 1; }
+}
+
+.block-body { padding: 0; display: grid; gap: var(--s2); }
 .block-body.is-collapsed { display: none; }
+
+/* İkincil blok alanları: yazarken değil, ayarlarken açılır. */
+.block-more {
+    display: grid;
+    gap: var(--s2);
+    margin-top: var(--s1);
+    padding: var(--s2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--surface-2);
+}
+.block-more[hidden] { display: none; }
+
+/* Etiketsiz basılan birincil alanın kendi boşluğu olmaz. */
+.block-body > .field:first-child { margin-bottom: 0; }
+
+/* -------------------------------------------------------------------------
+   17b. Zengin metin yüzeyi
+   ---------------------------------------------------------------------- */
+
+.rt-host { min-width: 0; }
+
+.rt {
+    min-height: 1.65em;
+    padding: 2px 0;
+    outline: 0;
+    font-size: 15.5px;
+    line-height: 1.65;
+    color: var(--ink);
+    /* Uzun URL ve kod satırları taşmasın. */
+    overflow-wrap: break-word;
+}
+.rt:empty::before,
+.rt[data-empty]::before {
+    content: attr(data-placeholder);
+    color: var(--ink-4);
+    pointer-events: none;
+}
+.rt strong { font-weight: var(--fw-bold); }
+.rt em { font-style: italic; }
+.rt s { text-decoration: line-through; }
+.rt mark { background: var(--accent-soft); color: var(--accent-ink); padding: 0 2px; border-radius: 2px; }
+.rt code {
+    font-family: var(--mono);
+    font-size: .88em;
+    background: var(--surface-2);
+    padding: 1px 4px;
+    border-radius: var(--r-xs);
+}
+.rt a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+}
+.rt sup, .rt sub { font-size: .72em; }
+
+/* Balon araç çubuğu: seçimin üstünde açılır, çerçeve renginde. */
+.rt-bubble {
+    position: absolute;
+    z-index: var(--z-pop);
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    padding: 3px;
+    border: 1px solid var(--frame-line);
+    border-radius: var(--r-sm);
+    background: var(--frame);
+    box-shadow: var(--pop);
+}
+.rt-bubble[hidden] { display: none; }
+
+.rt-btn {
+    min-width: 24px;
+    height: 23px;
+    padding: 0 var(--s1);
+    border: 0;
+    border-radius: var(--r-xs);
+    background: transparent;
+    color: var(--frame-ink);
+    font: inherit;
+    font-size: var(--fs-sm);
+    line-height: 1;
+    cursor: pointer;
+}
+.rt-btn:hover { background: var(--frame-hover); color: var(--frame-ink-hi); }
+.rt-btn[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.rt-sep { width: 1px; height: 14px; margin: 0 3px; background: var(--frame-line); }
+
+/* -------------------------------------------------------------------------
+   17c. Komut paleti
+   ---------------------------------------------------------------------- */
+
+.pal {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-modal);
+    display: grid;
+    place-items: start center;
+    padding-top: 12vh;
+    background: color-mix(in srgb, var(--frame-2) 55%, transparent);
+}
+.pal[hidden] { display: none; }
+
+.pal-box {
+    width: min(560px, calc(100vw - var(--s6)));
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    box-shadow: var(--pop-lg);
+    overflow: hidden;
+}
+
+.pal-in {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    height: 44px;
+    padding: 0 var(--s3);
+    border-bottom: 1px solid var(--line);
+}
+.pal-sign { color: var(--ink-4); font-family: var(--mono); font-size: var(--fs-md); }
+.pal-in input {
+    flex: 1;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-size: var(--fs-lg);
+}
+.pal-in input::placeholder { color: var(--ink-4); }
+
+.pal-list { max-height: min(52vh, 380px); overflow-y: auto; padding: var(--s1); }
+
+.pal-group {
+    padding: var(--s2) var(--s2) 2px;
+    font-size: var(--fs-micro);
+    font-weight: var(--fw-mid);
+    letter-spacing: .03em;
+    color: var(--ink-4);
+}
+
+.pal-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    height: 30px;
+    padding: 0 var(--s2);
+    border-radius: var(--r-sm);
+    font-size: var(--fs-md);
+    color: var(--ink-2);
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.pal-row[aria-selected="true"] { background: var(--accent-soft); color: var(--accent-ink); }
+.pal-hint { margin-left: auto; font-size: var(--fs-xs); color: var(--ink-4); }
+
+.pal-empty { padding: var(--s4) var(--s2); font-size: var(--fs); color: var(--ink-3); }
+
+.pal-foot {
+    display: flex;
+    gap: var(--s3);
+    padding: var(--s1) var(--s3);
+    border-top: 1px solid var(--line);
+    font-size: var(--fs-xs);
+    color: var(--ink-4);
+}
+.pal-foot b {
+    font-family: var(--mono);
+    font-size: var(--fs-micro);
+    font-weight: var(--fw);
+    border: 1px solid var(--line);
+    border-radius: var(--r-xs);
+    padding: 0 3px;
+}
 
 .block-add {
     display: flex;
@@ -1405,7 +2053,7 @@ textarea.mono { font-family: var(--mono); font-size: 12.5px; }
     padding: 10px 14px;
     border-bottom: 1px solid var(--line);
     font-size: 12.5px;
-    font-weight: 550;
+    font-weight: var(--fw-bold);
 }
 .box-head .ico { color: var(--ink-3); }
 .box-body { padding: 14px; }
@@ -1567,7 +2215,7 @@ textarea.mono { font-family: var(--mono); font-size: 12.5px; }
 .spacer { flex: 1; }
 .center { text-align: center; }
 .right { text-align: right; }
-.h3 { font-size: 15px; font-weight: 550; }
+.h3 { font-size: 15px; font-weight: var(--fw-bold); }
 .mt-1 { margin-top: 6px; } .mt-2 { margin-top: 12px; } .mt-3 { margin-top: 18px; } .mt-4 { margin-top: 24px; }
 .mb-0 { margin-bottom: 0 !important; } .mb-1 { margin-bottom: 6px; } .mb-2 { margin-bottom: 12px; } .mb-3 { margin-bottom: 18px; }
 .only-mobile { display: none; }

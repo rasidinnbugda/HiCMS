@@ -61,21 +61,18 @@ final class Str
 
     /**
      * Zengin metni güvenli bir etiket kümesine indirger.
-     * Blok içeriklerinde kullanıcı HTML'i buradan geçer.
+     *
+     * Gerçek iş `Html::clean()` tarafından yapılır: etiket bazlı izin listesi,
+     * etiket başına öznitelik listesi ve öznitelik değeri doğrulaması. Bu
+     * yöntem yalnızca geriye uyumluluk için durur — eklentiler ve temalar
+     * `Str::safeHtml()` çağırıyor olabilir.
+     *
+     * @deprecated 0.3.0 Doğrudan `Html::clean()` kullanın.
+     * @see Html::clean()
      */
     public static function safeHtml(?string $value): string
     {
-        $allowed = '<p><br><strong><b><em><i><u><s><a><ul><ol><li><blockquote>'
-            . '<h2><h3><h4><h5><h6><code><pre><figure><figcaption><img><hr>'
-            . '<table><thead><tbody><tr><th><td><small><sup><sub><span><div>';
-
-        $value = strip_tags((string) $value, $allowed);
-
-        // Olay öznitelikleri ve tehlikeli şemaları temizle.
-        $value = preg_replace('/\son[a-z]+\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)/i', '', $value) ?? '';
-        $value = preg_replace('/(href|src)\s*=\s*(["\']?)\s*(javascript|vbscript|data)\s*:/i', '$1=$2#', $value) ?? '';
-
-        return $value;
+        return Html::clean((string) $value);
     }
 
     /** URL'de kullanılabilir kısa ad üretir. Türkçe karakter duyarlı. */
@@ -107,15 +104,26 @@ final class Str
         return rtrim($cut, " ,.;:!?-") . $end;
     }
 
-    /** HTML'i temizleyip kısaltır. */
+    /**
+     * HTML'i temizleyip kısaltır.
+     *
+     * `strip_tags()` DEĞİL `Html::text()`: strip_tags `<script>` gövdesini
+     * metin olarak bırakır (özet "alert(1)" ile başlayabilir), blok
+     * etiketlerinin yerine ayırıcı koymaz (`<div>a</div><div>b</div>` → "ab")
+     * ve entity'leri çözmez. İkinci bir düz metin yolu bırakmamak için
+     * ikisi de temizleyicinin metin kipinden geçer.
+     *
+     * DİKKAT: dönen değer KAÇIRILMAMIŞ düz metindir (`Str::limit()` gibi).
+     * Şablonda basarken `esc_html()` kullanılmalıdır.
+     */
     public static function excerpt(string $html, int $length = 160, string $end = '…'): string
     {
-        return self::limit(strip_tags($html), $length, $end);
+        return self::limit(Html::text($html), $length, $end);
     }
 
     public static function words(string $text): int
     {
-        $text = trim(preg_replace('/\s+/u', ' ', strip_tags($text)) ?? '');
+        $text = trim(preg_replace('/\s+/u', ' ', Html::text($text)) ?? '');
 
         return $text === '' ? 0 : count(explode(' ', $text));
     }

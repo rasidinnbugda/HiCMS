@@ -128,6 +128,26 @@ final class Scheduler
         return $this->db->builder('jobs')->orderBy('run_at')->limit($limit)->get();
     }
 
+    /**
+     * Belirtilen süreden FAZLA gecikmiş görev sayısı.
+     *
+     * `dueCount()` "şimdi çalışabilir" olanları sayar; bu ise "çalışması
+     * gerekiyordu ama çalışmadı" olanları. Aradaki fark tanılama için önemli:
+     * görevler istek sonrasında çalıştığı için hiç ziyaret edilmeyen bir sitede
+     * hiç çalışmazlar ve bu sessizce olur — zamanlanmış yazılar yayınlanmaz,
+     * budama işlemez. Panelde uyarı olarak gösterilebilmesi için ölçülüyor.
+     */
+    public function overdue(int $seconds = 3600): int
+    {
+        if (!$this->ready()) {
+            return 0;
+        }
+
+        return $this->db->builder('jobs')
+            ->whereRaw('run_at < :limit', ['limit' => Dates::stamp('-' . max(1, $seconds) . ' seconds')])
+            ->count();
+    }
+
     public function dueCount(): int
     {
         if (!$this->ready()) {
@@ -192,6 +212,17 @@ final class Scheduler
      */
     public function tick(): void
     {
+        /*
+         * Oturum kilidi ÖNCE bırakılır. Aksi hâlde aşağıdaki görev — günlük
+         * budama, güncelleme denetimi, geçici dosya temizliği — veritabanı işi
+         * yaparken oturum dosyasının kilidini elinde tutar ve kullanıcının
+         * sıradaki isteği bu işin bitmesini bekler. Yanıt zaten gönderildiği
+         * için oturuma yazacak bir şey kalmadı.
+         */
+        if (function_exists('session_write_close') && session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+
         if (function_exists('fastcgi_finish_request')) {
             @fastcgi_finish_request();
         }

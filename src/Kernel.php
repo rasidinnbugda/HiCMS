@@ -56,13 +56,21 @@ use RuntimeException;
  */
 final class Kernel
 {
-    public const VERSION = '0.2.0';
+    public const VERSION = '0.3.0';
 
     private static ?self $instance = null;
 
     private Container $container;
 
     private bool $booted = false;
+
+    /**
+     * Eklenti başına ayar tanımı. Container'da değil burada tutuluyor: anahtar
+     * çalışma anında belirlenen bir kısa ad, servis adı değil.
+     *
+     * @var array<string, Extension\Settings>
+     */
+    private array $pluginSettings = [];
 
     /** @var array<string, string> */
     private array $paths;
@@ -190,6 +198,18 @@ final class Kernel
         $scheduler->handle('core.prune_logs', function (): void {
             $this->audit()->prune((int) $this->options()->get('log_retention_days', 180));
             $this->auth()->pruneAttempts();
+
+            /*
+             * Sürüm ve çöp kutusu budaması AYRI BİR GÖREV DEĞİL, buraya eklendi.
+             *
+             * Yeni bir `jobs` satırı yazmak migration'ın veritabanına dokunmasını
+             * gerektirir; o da `build/smoke.php`'nin veritabanısız kuru
+             * çalıştırmasını kırıyor (ham insert bağlanmayı dener). Mevcut görev
+             * her kurulumda zaten var, dolayısıyla eski kurulumlar da budamayı
+             * güncelleme sonrası kendiliğinden kazanıyor.
+             */
+            $this->content()->pruneRevisions((int) $this->options()->get('revision_keep', 20));
+            $this->content()->purgeTrash((int) $this->options()->get('trash_days', 30));
         });
 
         $scheduler->handle('core.check_updates', function (): void {
@@ -224,7 +244,19 @@ final class Kernel
 
         $c->singleton('events', static fn(): Dispatcher => new Dispatcher());
 
-        $c->singleton('request', fn(): Request => Request::capture($this->baseUrlPath()));
+        $c->singleton('request', function (): Request {
+            $request = Request::capture($this->baseUrlPath());
+
+            /*
+             * Vekil başlıklarına yalnızca bildirilen adreslerden güvenilir.
+             * Varsayılan boş: hiçbir başlığa güvenilmez, REMOTE_ADDR kullanılır.
+             * Cloudflare ya da nginx arkasındaysanız config.php'ye ekleyin:
+             *     'trusted_proxies' => ['10.0.0.1', '172.16.0.0/12'],
+             */
+            $request->trustProxies((array) $this->config->get('trusted_proxies', []));
+
+            return $request;
+        });
 
         $c->singleton('urls', fn(Container $c): Url => new Url(
             (string) $this->config->get('url', ''),
@@ -274,7 +306,9 @@ final class Kernel
             $c->get('users'),
             $c->get('mediaRepo'),
             $c->get('events'),
-            $c->get('types')
+            $c->get('types'),
+            // Blok ağacını kayıt anında temizler; bkz. ContentRepository::save().
+            $c->get('blocks')
         ));
 
         $c->singleton('links', fn(Container $c): Permalinks => new Permalinks(
@@ -553,6 +587,18 @@ final class Kernel
     public function plugins(): PluginManager
     {
         return $this->container->get('plugins');
+    }
+
+    /**
+     * Bir eklentinin ayar tanımı.
+     *
+     * Eklenti başına tek örnek tutulur; aynı istekte iki kez çağırmak aynı
+     * nesneyi verir, dolayısıyla bir yerde tanımlanan bölümler başka yerde
+     * okunabilir.
+     */
+    public function settings(string $slug): Extension\Settings
+    {
+        return $this->pluginSettings[$slug] ??= new Extension\Settings($slug, $this->options());
     }
 
     public function scheduler(): Scheduler

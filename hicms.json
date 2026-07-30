@@ -1,7 +1,7 @@
 {
     "name": "HiCMS",
     "slug": "hicms",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "type": "core",
     "description": "PHP tabanlı, blok içerikli, tema ve eklenti mimarisiyle genişleyen içerik yönetim sistemi.",
     "author": "Raşidin Buğda",

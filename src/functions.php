@@ -916,3 +916,70 @@ function hi_setup_entry(Entry $entry): void
     hi_view()->entries[] = $entry;
     hi_view()->next();
 }
+
+/* -------------------------------------------------------------------------
+ * Eklenti altyapısı — 0.3.0
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Bir eklentinin ayar tanımı.
+ *
+ * Bildirimsel: eklenti alanları tarif eder, formu basmak / doğrulamak /
+ * temizlemek / saklamak çekirdeğin işi olur.
+ *
+ *     hi_settings('hi-seo')->section('genel', 'Genel', [
+ *         ['key' => 'title_pattern', 'type' => 'text', 'label' => 'Başlık kalıbı'],
+ *         ['key' => 'noindex_archives', 'type' => 'switch', 'label' => 'Arşivleri gizle'],
+ *     ]);
+ *
+ *     $pattern = hi_settings('hi-seo')->get('title_pattern');
+ */
+function hi_settings(string $slug): HiCMS\Extension\Settings
+{
+    return hi()->settings($slug);
+}
+
+/**
+ * Panel için JavaScript verisi yayınlar.
+ *
+ * Eklentinin panel betiğine veri geçirmesinin DOĞRU yolu. Satır içi
+ * `<script>window.X = …</script>` yazmak anında sayfa geçişinde ÇALIŞMAZ:
+ * bölge değişiminde gelen betik etiketleri çalıştırılmaz. Veri
+ * `<script type="application/json">` olarak basılır, JS tarafında
+ * `HiAdmin.data('<ad>')` ile okunur.
+ *
+ * @param array<string, mixed>|list<mixed> $data
+ */
+function hi_admin_data(string $name, array $data): void
+{
+    $id = 'hi-data-' . HiCMS\Support\Str::slug($name);
+
+    hi()->events()->on('admin.footer', static function () use ($id, $data): void {
+        printf(
+            '<script type="application/json" id="%s">%s</script>',
+            HiCMS\Support\Str::attr($id),
+            esc_json($data)
+        );
+    });
+}
+
+/**
+ * Panele betik ekler.
+ *
+ * Adres `admin_asset()` ile damgalanmadığı için eklentinin kendi sürümünü
+ * eklemesi önerilir; yoksa güncellemeden sonra tarayıcı eski dosyayı verir.
+ */
+function hi_admin_script(string $url): void
+{
+    hi()->events()->on('admin.footer', static function () use ($url): void {
+        printf('<script src="%s"></script>', esc_url($url));
+    });
+}
+
+/** Panele stil ekler. */
+function hi_admin_style(string $url): void
+{
+    hi()->events()->on('admin.head', static function () use ($url): void {
+        printf('<link rel="stylesheet" href="%s">', esc_url($url));
+    });
+}

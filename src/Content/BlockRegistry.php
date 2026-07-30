@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace HiCMS\Content;
 
 use Closure;
+use HiCMS\Support\Html;
 
 /**
  * Blok türü kaydı.
@@ -117,6 +118,103 @@ final class BlockRegistry
         }
 
         return $data;
+    }
+
+    /**
+     * Blok ağacını KAYIT ANINDA temizler.
+     *
+     * Neden burada: 0.2.0'da temizleme yalnızca render anında yapılıyordu
+     * (Field::sanitize, BlockRenderer üzerinden). Ön yüz güvenliydi ama
+     * veritabanına ham HTML yazılıyordu ve blok metnini o iki yoldan geçmeden
+     * kullanan HER tüketici ham veriyi görüyordu: JSON çıktısı, dışa aktarma,
+     * arama dizini, denetim günlüğü özeti, eklentiler ve panelin kendisi.
+     *
+     * Kayıt sınırında temizlemek bunların hepsini tek noktadan güvenli kılar.
+     * Render anındaki temizleme KALDIRILMADI — eski kayıtlar ve elle
+     * veritabanına yazılmış içerik için ikinci savunma katmanı olarak durur.
+     *
+     * Bilinmeyen blok türü ATILMAZ: bir eklenti devre dışıyken içeriği
+     * kaydetmek o eklentinin bloklarını silmemeli. Tanınmayan türün verisi
+     * dokunulmadan geçer, ama string alanları yine de temizlenir.
+     *
+     * @param list<array<string, mixed>> $blocks
+     * @return list<array<string, mixed>>
+     */
+    public function sanitizeTree(array $blocks, int $depth = 0): array
+    {
+        // Derinlik sınırı: iç içe blok (repeater) ile özyineleme bombası kurulmasın.
+        if ($depth > 6) {
+            return [];
+        }
+
+        $clean = [];
+
+        foreach ($blocks as $block) {
+            if (!is_array($block)) {
+                continue;
+            }
+
+            $type = (string) ($block['type'] ?? '');
+
+            if ($type === '') {
+                continue;
+            }
+
+            $data       = (array) ($block['data'] ?? []);
+            $definition = $this->definition($type);
+
+            if ($definition === null) {
+                /*
+                 * Tanınmayan tür: eklenti pasif olabilir. Veri korunur ama
+                 * içindeki metinler yine temizlenir — bilinmeyen bir türün
+                 * ham HTML taşımasına izin vermek saklı XSS demek.
+                 */
+                $clean[] = ['type' => $type, 'data' => $this->sanitizeUnknown($data, $depth)];
+                continue;
+            }
+
+            $result = [];
+
+            foreach ($definition['fields'] ?? [] as $spec) {
+                $key = (string) ($spec['key'] ?? '');
+
+                if ($key === '' || !array_key_exists($key, $data)) {
+                    continue;
+                }
+
+                $result[$key] = Field::fromArray($spec)->sanitize($data[$key]);
+            }
+
+            $clean[] = ['type' => $type, 'data' => $result];
+        }
+
+        return $clean;
+    }
+
+    /**
+     * Tanınmayan blok verisini tür bilgisi olmadan temizler: her dize
+     * güvenli HTML kümesine indirgenir, yapı korunur.
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    private function sanitizeUnknown(array $data, int $depth): array
+    {
+        if ($depth > 6) {
+            return [];
+        }
+
+        $clean = [];
+
+        foreach ($data as $key => $value) {
+            $clean[$key] = match (true) {
+                is_string($value) => Html::clean($value),
+                is_array($value)  => $this->sanitizeUnknown($value, $depth + 1),
+                default           => $value,
+            };
+        }
+
+        return $clean;
     }
 
     /**

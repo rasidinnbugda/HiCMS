@@ -22,6 +22,15 @@ final class UpdateChecker
     private const CACHE_KEY = 'update.cache';
     private const TTL       = 21600; // 6 saat
 
+    /**
+     * İstek içi bellek: depo → sonuç. Aynı istekte tekrarlanan denetimler
+     * veritabanına ve GitHub'a ikinci kez gitmez.
+     *
+     * @var array<string, array{ok: bool, version: string, zip: string, notes: string,
+     *                          published: string, url: string, error: string}>
+     */
+    private array $memo = [];
+
     public function __construct(private readonly OptionRepository $options)
     {
     }
@@ -43,10 +52,21 @@ final class UpdateChecker
             return ['error' => 'Depo bildirilmemiş.'] + $empty;
         }
 
+        /*
+         * İstek başına bellekleme. Panel gösterge sayfasında sürüm denetimi İKİ
+         * kez çalışıyordu: menü kurulurken (bootstrap.php) ve gösterge
+         * kutusunda (index.php). Altı saatlik seçenek önbelleği vardı ama o
+         * önbellek her çağrıda veritabanından okunuyordu; önbellek soğukken de
+         * aynı istek içinde iki HTTP çağrısı yapılıyordu.
+         */
+        if (!$force && array_key_exists($repository, $this->memo)) {
+            return $this->memo[$repository];
+        }
+
         $cache = $this->readCache();
 
         if (!$force && isset($cache[$repository]) && ($cache[$repository]['checked'] ?? 0) > time() - self::TTL) {
-            return $cache[$repository]['result'];
+            return $this->memo[$repository] = $cache[$repository]['result'];
         }
 
         $response = Remote::getJson(
@@ -60,7 +80,7 @@ final class UpdateChecker
             // Hatalı sonucu da kısa süre önbellekle: her sayfa açılışında denemeyelim.
             $this->writeCache($repository, $result, time() - self::TTL + 900);
 
-            return $result;
+            return $this->memo[$repository] = $result;
         }
 
         $data    = $response['data'];
@@ -93,7 +113,7 @@ final class UpdateChecker
 
         $this->writeCache($repository, $result);
 
-        return $result;
+        return $this->memo[$repository] = $result;
     }
 
     /**
@@ -145,6 +165,10 @@ final class UpdateChecker
     public function clearCache(): void
     {
         $this->options->delete(self::CACHE_KEY);
+
+        // İstek içi bellek de temizlenmeli, yoksa aynı istekte yapılan
+        // zorlamasız bir denetim silinen sonucu geri verir.
+        $this->memo = [];
     }
 
     public function lastCheckedAt(string $repository): int

@@ -165,6 +165,12 @@ final class Installer
                 'app'    => Str::random(32),
                 'cookie' => Str::random(32),
             ],
+            /*
+             * Boş yazılır ama YAZILIR: kullanıcı config.php'yi açtığında bu
+             * ayarın var olduğunu görsün. Boş liste "hiçbir vekil başlığına
+             * güvenme" demek; ters vekil arkasındaki kurulumlar burayı doldurur.
+             */
+            'trusted_proxies' => [],
         ]);
 
         if (!$config->writeTo($this->rootDir . '/config.php')) {
@@ -300,6 +306,10 @@ final class Installer
             'upload_max_bytes'    => 16777216,
             'allow_svg'           => false,
             'log_retention_days'  => 180,
+            // Kayıt başına tutulan sürüm sayısı ve çöp kutusu bekleme süresi.
+            // Budama core.prune_logs görevinde yapılıyor.
+            'revision_keep'       => 20,
+            'trash_days'          => 30,
             'footer_note'         => 'HiCMS ile üretildi.',
             'social'              => ['x' => '', 'instagram' => '', 'linkedin' => '', 'github' => '', 'youtube' => ''],
         ]);

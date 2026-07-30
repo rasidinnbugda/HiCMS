@@ -17,6 +17,39 @@ use HiCMS\Support\Dates;
 use HiCMS\Support\Str;
 
 /* -------------------------------------------------------------------------
+ * Varlık adresleri
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Panel varlığının adresini içerik damgasıyla döndürür.
+ *
+ * 0.2.0 yalnızca `?v=Kernel::VERSION` kullanıyordu. Sürüm numarası değişmeden
+ * CSS ya da JS değiştirildiğinde tarayıcı eski dosyayı servis ediyordu; bu
+ * hem geliştirme sırasında yanlış doğrulamaya hem de yama sürümlerinde
+ * kullanıcıların bozuk arayüz görmesine yol açar.
+ *
+ * Damga dosyanın değişme zamanından üretilir: dosya değişmezse adres de
+ * değişmez, yani önbellek korunur.
+ */
+function admin_asset(string $relative): string
+{
+    static $stamps = [];
+
+    $relative = ltrim($relative, '/');
+
+    if (!array_key_exists($relative, $stamps)) {
+        $path = __DIR__ . '/../' . $relative;
+        $time = is_file($path) ? (int) @filemtime($path) : 0;
+
+        $stamps[$relative] = $time > 0
+            ? substr(dechex($time), -6)
+            : Kernel::VERSION;
+    }
+
+    return $relative . '?v=' . $stamps[$relative];
+}
+
+/* -------------------------------------------------------------------------
  * İkonlar — satır içi SVG, harici kütüphane yok
  * ---------------------------------------------------------------------- */
 
@@ -134,7 +167,15 @@ function admin_head(array $page): void
     $title = (string) ($page['title'] ?? 'Panel');
     ?>
 <!DOCTYPE html>
-<html lang="tr" data-scheme="light">
+<?php
+/*
+ * data-scheme ÖNCEDEN YAZILMAZ. 0.2.0'da burada data-scheme="light" sabitti ve
+ * karanlık temayı yalnızca inline JS uyguluyordu; JS kapalıyken panel her
+ * koşulda aydınlık kalıyordu. Öznitelik yokken CSS'teki
+ * @media (prefers-color-scheme: dark) devreye girer.
+ */
+?>
+<html lang="tr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -142,18 +183,30 @@ function admin_head(array $page): void
     <title><?= esc_html($title) ?> · <?= esc_html($app->siteName()) ?></title>
 
     <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="assets/css/admin.css?v=<?= esc_attr(Kernel::VERSION) ?>">
+    <?php
+    /*
+     * Yazı tipi sistem yığınından gelir. 0.2.0 Inter'i fonts.googleapis.com'dan
+     * çekiyordu: her panel yüklemesi üçüncü parti bir alan adına istek atıyor,
+     * kapalı ağda panel yine sistem fontuna düşüyordu. Dış bağımlılık kaldırıldı.
+     */
+    ?>
+    <link rel="stylesheet" href="<?= esc_attr(admin_asset('assets/css/admin.css')) ?>">
 
-    <?php // Şemayı boyamadan önce uygula: sayfa geçişlerinde beyaz parlama olmasın. ?>
+    <?php
+    /*
+     * Şema önce CSS'ten gelir: admin.css içinde @media (prefers-color-scheme: dark)
+     * var, yani JS KAPALIYKEN de karanlık tema çalışır. Aşağıdaki betik yalnızca
+     * kullanıcının paneldeki AÇIK seçimini uygular ve boyamadan önce çalışır ki
+     * sayfa geçişlerinde beyaz parlama olmasın.
+     */
+    ?>
     <script>
         (function () {
             try {
                 var s = localStorage.getItem('hicms-scheme');
-                var dark = s ? s === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-                document.documentElement.setAttribute('data-scheme', dark ? 'dark' : 'light');
+                if (s === 'dark' || s === 'light') {
+                    document.documentElement.setAttribute('data-scheme', s);
+                }
             } catch (e) {}
         })();
     </script>
@@ -205,34 +258,69 @@ function admin_head(array $page): void
 
         <div class="side-foot">
             <a class="side-site" href="<?= esc_url($app->urls()->to()) ?>" target="_blank" rel="noopener">
-                <?= admin_icon('external', 15) ?>
+                <?= admin_icon('external', 14) ?>
                 <span>Siteyi görüntüle</span>
             </a>
+            <?php // Kaldırılan alt bilgi şeridinin taşıdığı sabit bilgi buraya indi. ?>
+            <p class="side-build">
+                HiCMS <?= esc_html(Kernel::VERSION) ?>
+                · <?= esc_html(hi()->themes()->active()?->name ?? '—') ?>
+            </p>
         </div>
     </aside>
 
     <div class="main">
+        <?php
+        /*
+         * KOMUT ŞERİDİ. Üç iş: nerede olduğunu söylemek, en hızlı giriş yolunu
+         * sunmak, ne yaptığını bildirmek. Arama alanı gizli bir ⌘K penceresi
+         * değil — sürekli görünür, çünkü keşfedilmeyen kısayol kısayol değildir.
+         *
+         * JS kapalıyken form olarak content.php'ye GET atar; yani temel arama
+         * işlevi betiksiz de çalışır.
+         */
+        ?>
         <header class="bar">
             <button class="icon-btn only-mobile" type="button" data-toggle="sidebar" aria-label="Menü">
                 <?= admin_icon('list', 18) ?>
             </button>
 
+            <div class="bar-crumb only-wide">
+                <strong><?= esc_html($title) ?></strong>
+                <?php if (($page['count'] ?? null) !== null) : ?>
+                    <span class="sep" aria-hidden="true">/</span>
+                    <span><?= esc_html(Str::number((int) $page['count'])) ?> kayıt</span>
+                <?php endif; ?>
+            </div>
+
             <form class="bar-search" method="get" action="content.php" role="search">
-                <?= admin_icon('search', 16) ?>
-                <label class="sr-only" for="bar-q">İçerikte ara</label>
-                <input type="search" id="bar-q" name="ara" placeholder="İçerikte ara"
+                <?= admin_icon('search', 15) ?>
+                <label class="sr-only" for="bar-q">Komut ya da içerik ara</label>
+                <input type="search" id="bar-q" name="ara" placeholder="Komut ya da ara"
+                       autocomplete="off"
                        value="<?= esc_attr((string) ($_GET['ara'] ?? '')) ?>">
+                <span class="bar-key" aria-hidden="true">/</span>
             </form>
 
             <span class="bar-gap"></span>
 
+            <?php
+            /*
+             * Canlı durum: otomatik kaydetme ve kısmi güncelleme buraya yazar.
+             * Panelin hızlı hissetmesinin yarısı işini bildirmesinden geliyor.
+             */
+            ?>
+            <output class="bar-activity only-wide" id="hi-activity" aria-live="polite">
+                <span class="live" aria-hidden="true"></span><span>Hazır</span>
+            </output>
+
             <a class="btn btn-sm" href="content-edit.php?tur=post">
-                <?= admin_icon('plus', 15) ?><span class="only-wide">Yeni yazı</span>
+                <?= admin_icon('plus', 14) ?><span class="only-wide">Yeni yazı</span>
             </a>
 
             <button class="icon-btn" type="button" data-toggle="scheme" aria-pressed="false" aria-label="Temayı değiştir">
-                <span data-ico="moon"><?= admin_icon('moon', 17) ?></span>
-                <span data-ico="sun" hidden><?= admin_icon('sun', 17) ?></span>
+                <span data-ico="moon"><?= admin_icon('moon', 16) ?></span>
+                <span data-ico="sun" hidden><?= admin_icon('sun', 16) ?></span>
             </button>
 
             <div class="menu" data-menu>
@@ -255,12 +343,30 @@ function admin_head(array $page): void
                         <a class="menu-item" href="settings.php"><?= admin_icon('settings', 15) ?>Ayarlar</a>
                     <?php endif; ?>
                     <div class="menu-sep"></div>
-                    <a class="menu-item is-danger" href="logout.php"><?= admin_icon('log-out', 15) ?>Çıkış yap</a>
+                    <?php // Çıkış durum değiştirir: bağlantı değil, doğrulanmış POST. ?>
+                    <form method="post" action="logout.php">
+                        <?= hi_csrf_field() ?>
+                        <button class="menu-item is-danger" type="submit">
+                            <?= admin_icon('log-out', 15) ?>Çıkış yap
+                        </button>
+                    </form>
                 </div>
             </div>
         </header>
 
-        <main class="content<?= !empty($page['wide']) ? ' is-wide' : '' ?>" id="main">
+        <?php
+        /*
+         * Ölçü sınırı: 'narrow' verilen sayfalar (form ve okuma ekranları)
+         * sınırlanır, liste ekranları TAM GENİŞLİK kullanır. 0.2.0'da her ekran
+         * 1120px ile sınırlıydı ve geniş ekranda iki yanda ölü alan kalıyordu.
+         */
+        $contentClass = 'content';
+
+        if (!empty($page['narrow'])) {
+            $contentClass .= ' is-narrow';
+        }
+        ?>
+        <main class="<?= esc_attr($contentClass) ?>" id="main">
             <?php if (empty($page['bare'])) : ?>
                 <div class="page-head">
                     <div>
@@ -277,7 +383,13 @@ function admin_head(array $page): void
                             </nav>
                         <?php endif; ?>
 
-                        <h1 class="page-title"><?= esc_html($title) ?></h1>
+                        <h1 class="page-title">
+                            <?= esc_html($title) ?><?php
+                            // Kaç kayıt olduğu yoğun bir araçta birincil bilgi.
+                            if (($page['count'] ?? null) !== null) : ?><span
+                                class="count"><?= esc_html(Str::number((int) $page['count'])) ?></span><?php
+                            endif; ?>
+                        </h1>
 
                         <?php if (($page['description'] ?? '') !== '') : ?>
                             <p class="page-desc"><?= esc_html((string) $page['description']) ?></p>
@@ -315,26 +427,63 @@ function admin_foot(): void
 {
     ?>
         </main>
-
-        <footer class="foot">
-            <span>HiCMS <?= esc_html(Kernel::VERSION) ?></span>
-            <span aria-hidden="true">·</span>
-            <span>Tema: <?= esc_html(hi()->themes()->active()?->name ?? '—') ?></span>
-            <span class="bar-gap"></span>
-            <?php if (hi()->isDebug()) : ?>
+        <?php
+        /*
+         * Alt bilgi şeridi KALDIRILDI. 57px'lik sabit bir bant her ekranda
+         * dikey alan yiyordu ve taşıdığı bilgi (sürüm, etkin tema) hiç
+         * değişmeyen bir şeydi — kenar çubuğunun altına taşındı.
+         *
+         * Yalnızca hata ayıklama açıkken sorgu sayacı basılır; o gerçekten
+         * değişen ve bakılması gereken bir sayı.
+         */
+        ?>
+        <?php if (hi()->isDebug()) : ?>
+            <footer class="foot">
                 <span><?= (int) hi()->db()->queryCount() ?> sorgu</span>
-            <?php endif; ?>
-        </footer>
+                <span aria-hidden="true">·</span>
+                <span>HiCMS <?= esc_html(Kernel::VERSION) ?></span>
+            </footer>
+        <?php endif; ?>
     </div>
 </div>
 
 <div class="scrim" data-scrim hidden></div>
 
-<script src="assets/js/admin.js?v=<?= esc_attr(Kernel::VERSION) ?>"></script>
-<?php hi()->events()->emit('admin.footer'); ?>
+<script src="<?= esc_attr(admin_asset('assets/js/admin.js')) ?>"></script>
+<?php
+/*
+ * nav.js admin.js'ten SONRA: HiAdmin.mount() sözleşmesine bağlanıyor.
+ * Yüklenmezse panel 0.2.0'daki gibi tam sayfa yüklemesiyle çalışır —
+ * hiçbir işlev buna bağımlı değil.
+ */
+?>
+<script src="<?= esc_attr(admin_asset('assets/js/nav.js')) ?>"></script>
+<script src="<?= esc_attr(admin_asset('assets/js/palette.js')) ?>"></script>
+<?php
+/*
+ * Eklenti çıktısı SARMALANMIŞ bir kapta durur.
+ *
+ * hi_admin_data() ve hi_admin_script() bu kancaya basıyor, yani çıktı </main>
+ * sonrasında geliyor. nav.js bölge değişiminde bu kabı da değiştiriyor
+ * (#hi-plugin-slot); kap olmasaydı eklenti verisi ve betiği anında geçişte hiç
+ * gelmez, sayfaya doğrudan girildiğinde çalışıp listeden geçilince çalışmayan
+ * bir ekran doğardı.
+ */
+?>
+<div id="hi-plugin-slot"><?php hi()->events()->emit('admin.footer'); ?></div>
 </body>
 </html>
     <?php
+    /*
+     * Oturum kilidi burada bırakılır. Sayfa tamamlandı, eklentiler de
+     * admin.footer kancasında yazma şansını kullandı; bundan sonra $_SESSION'a
+     * yazacak bir şey yok.
+     *
+     * Bırakılmazsa aynı kullanıcıdan gelen paralel istekler (otomatik kaydetme,
+     * anlık arama, kısmi güncelleme) oturum dosyasının kilidini bekleyerek tek
+     * tek çalışır — panelin "anında" hissetmesi imkânsız hale gelir.
+     */
+    hi()->auth()->closeSession();
 }
 
 /* -------------------------------------------------------------------------

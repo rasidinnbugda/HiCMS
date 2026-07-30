@@ -10,6 +10,7 @@ use HiCMS\Http\Url;
 use HiCMS\Repository\ContentRepository;
 use HiCMS\Repository\OptionRepository;
 use HiCMS\Repository\TermRepository;
+use HiCMS\Support\Html;
 use HiCMS\Support\Str;
 
 /**
@@ -253,7 +254,7 @@ final class Widgets
             $clean[$key] = match ((string) ($field['type'] ?? 'text')) {
                 'number'   => (int) $value,
                 'switch'   => in_array($value, ['1', 'on', true, 1], true),
-                'richtext' => Str::safeHtml(is_string($value) ? $value : ''),
+                'richtext' => Html::clean(is_string($value) ? $value : ''),
                 'select'   => isset($field['options'][$value]) ? (string) $value
                                 : (string) (array_key_first((array) ($field['options'] ?? [])) ?? ''),
                 default    => is_scalar($value) ? trim((string) $value) : '',
@@ -306,7 +307,7 @@ final class Widgets
                     return '';
                 }
 
-                $html = '<div class="widget-about">' . Str::safeHtml($text);
+                $html = '<div class="widget-about">' . Html::clean($text);
                 $link = trim((string) ($settings['link'] ?? ''));
 
                 if ($link !== '') {
@@ -454,7 +455,7 @@ final class Widgets
             'render' => static function (array $settings): string {
                 $text = trim((string) ($settings['text'] ?? ''));
 
-                return $text === '' ? '' : '<div class="widget-text">' . Str::safeHtml($text) . '</div>';
+                return $text === '' ? '' : '<div class="widget-text">' . Html::clean($text) . '</div>';
             },
         ]);
     }

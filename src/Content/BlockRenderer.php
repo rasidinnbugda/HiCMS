@@ -10,6 +10,7 @@ use HiCMS\Http\Url;
 use HiCMS\Model\Entry;
 use HiCMS\Model\MediaItem;
 use HiCMS\Repository\MediaRepository;
+use HiCMS\Support\Html;
 use HiCMS\Support\Str;
 
 /**
@@ -110,10 +111,11 @@ final class BlockRenderer
      */
     public function rich(string $value): string
     {
-        $value = Str::safeHtml($value);
+        $value = Html::clean($value);
 
-        // Zaten blok etiketi içeriyorsa dokunma.
-        if (preg_match('/<(p|ul|ol|blockquote|h[2-6]|figure|div|table)\b/i', $value) === 1) {
+        // Zaten blok etiketi içeriyorsa dokunma. (`div` temizleyicinin izin
+        // listesinde yok; soyulduğu için burada aranmaz.)
+        if (preg_match('/<(p|ul|ol|blockquote|h[2-6]|figure|table|pre)\b/i', $value) === 1) {
             return $value;
         }
 
@@ -123,16 +125,25 @@ final class BlockRenderer
             return nl2br(trim($value), false);
         }
 
-        return implode('', array_map(
+        $html = implode('', array_map(
             static fn(string $p): string => '<p>' . nl2br(trim($p), false) . '</p>',
             $paragraphs
         ));
+
+        /* Paragrafa bölme temizleyiciden SONRA çalışıyor ve bölme noktası açık
+         * bir satır içi öğenin ortasına düşebiliyor: `<mark>bir\n\niki</mark>`
+         * girdisi `<p><mark>bir</p><p>iki</mark></p>` üretiyordu — DENGESİZ.
+         * Temizleyicinin "çıktı her zaman dengeli" güvencesi bu satırda
+         * yeniden kuruluyor; Html::clean() değişmez (idempotent) olduğu için
+         * ikinci geçiş zaten temiz olan parçalara dokunmaz.
+         * (ELEŞTİRMEN BULGUSU — bkz. build/smoke.php "HTML temizleyici".) */
+        return Html::clean($html);
     }
 
     /** Kullanıcı HTML'i — güvenli etiket kümesine indirgenir. */
     public function safe(string $value): string
     {
-        return Str::safeHtml($value);
+        return Html::clean($value);
     }
 
     /**
@@ -205,12 +216,93 @@ final class BlockRenderer
         $html = '<img';
 
         foreach ($attributes as $name => $value) {
-            $html .= ' ' . $name . '="' . ($name === 'src' || $name === 'srcset'
-                ? Str::attr($value)
-                : Str::attr($value)) . '"';
+            $html .= ' ' . $name . '="' . Str::attr($value) . '"';
         }
 
-        return $html . '>';
+        $html .= '>';
+
+        /*
+         * MODERN BİÇİMLER `<picture>` İLE SUNULUR.
+         *
+         * `srcset` BİÇİM KARIŞTIRAMAZ: tarayıcı listedeki adayların hepsinin
+         * aynı biçimde olduğunu varsayar, `type` bildirimi yoktur. WebP'yi
+         * srcset'e koymak, desteklemeyen tarayıcıya bozuk görsel göstermek olur.
+         *
+         * Bu yüzden 0.2.0'da HiMedia'nın ürettiği WebP dosyası diskte duruyor
+         * ama hiçbir yerde sunulmuyordu — kazanç üretilmiş, teslim edilmemiş.
+         *
+         * `<picture>` YALNIZCA modern türev gerçekten varsa basılır; yoksa çıktı
+         * bugünküyle birebir aynı kalır. Böylece tema CSS'i ve mevcut
+         * işaretleme beklentileri bozulmuyor.
+         */
+        $modern = $this->modernSources($item);
+
+        if ($modern === []) {
+            return $html;
+        }
+
+        $picture = '<picture>';
+
+        foreach ($modern as $mime => $set) {
+            $picture .= '<source type="' . Str::attr($mime) . '" srcset="' . Str::attr($set) . '"'
+                . ' sizes="' . Str::attr($sizes) . '">';
+        }
+
+        return $picture . $html . '</picture>';
+    }
+
+    /**
+     * Modern biçim türevlerini MIME türüne göre gruplar.
+     *
+     * Biçim dosya UZANTISINDAN türetilir, `sizes` içindeki bir anahtardan değil:
+     * eklentinin ayrıca bir alan doldurmasına bağlı kalmadan çalışır.
+     *
+     * Sıra önemli — tarayıcı desteklediği İLK kaynağı seçer, o yüzden en verimli
+     * biçim başta olmalı: AVIF, sonra WebP.
+     *
+     * @return array<string, string> MIME → srcset
+     */
+    private function modernSources(MediaItem $item): array
+    {
+        if ($item->sizes === []) {
+            return [];
+        }
+
+        $byMime = [];
+
+        foreach ($item->sizes as $size) {
+            $file  = (string) ($size['file'] ?? '');
+            $width = (int) ($size['width'] ?? 0);
+
+            if ($file === '' || $width <= 0) {
+                continue;
+            }
+
+            $mime = match (strtolower((string) pathinfo($file, PATHINFO_EXTENSION))) {
+                'avif' => 'image/avif',
+                'webp' => 'image/webp',
+                default => '',
+            };
+
+            if ($mime === '') {
+                continue;
+            }
+
+            $byMime[$mime][$width] = $this->url->uploads($file) . ' ' . $width . 'w';
+        }
+
+        $ordered = [];
+
+        foreach (['image/avif', 'image/webp'] as $mime) {
+            if (!isset($byMime[$mime])) {
+                continue;
+            }
+
+            ksort($byMime[$mime]);
+            $ordered[$mime] = implode(', ', $byMime[$mime]);
+        }
+
+        return $ordered;
     }
 
     /**
@@ -229,6 +321,17 @@ final class BlockRenderer
             $width = (int) ($size['width'] ?? 0);
 
             if ($file === '' || $width <= 0) {
+                continue;
+            }
+
+            /*
+             * Modern biçim türevleri buraya GİRMEZ. Tek bir srcset içinde iki
+             * farklı biçim bulunamaz: tarayıcı adayların hepsini aynı biçim
+             * sayar ve `type` bildirimi yoktur, dolayısıyla WebP'yi burada
+             * sunmak desteklemeyen tarayıcıya bozuk görsel göstermek olur.
+             * Onlar <picture><source> ile sunuluyor (bkz. modernSources()).
+             */
+            if (in_array(strtolower((string) pathinfo($file, PATHINFO_EXTENSION)), ['webp', 'avif'], true)) {
                 continue;
             }
 

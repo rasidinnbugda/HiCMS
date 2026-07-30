@@ -34,10 +34,31 @@ if (!isset($tabs[$tab])) {
 $options = $app->options();
 
 if ($app->request()->isPost()) {
-    admin_verify('settings.php?sekme=' . $tab);
+    /*
+     * Kaydedilecek bölüm YALNIZCA formun kendi 'bolum' alanından belirlenir.
+     *
+     * 0.2.0'da doğrulama ve yönlendirme $tab (GET sekme) kullanıyor, kaydetme
+     * ise $_POST['bolum'] ?? $tab ile switch'leniyordu. İkisi ayrıştığında —
+     * örneğin form bir sekmede açılıp adres çubuğu başka sekmeye işaret
+     * ederken gönderildiğinde — YANLIŞ bölümün alanları kaydediliyordu:
+     * gönderilmeyen alanlar boş string olarak yazılıp mevcut ayarları
+     * siliyordu. Denetim günlüğüne de yanlış bölüm adı düşüyordu.
+     *
+     * Artık tek kaynak POST; geçersizse istek reddedilir, tahmin edilmez.
+     */
+    $section = (string) ($_POST['bolum'] ?? '');
 
-    $section = (string) ($_POST['bolum'] ?? $tab);
-    $saved   = [];
+    if (!isset($tabs[$section])) {
+        admin_redirect(
+            'settings.php?sekme=' . $tab,
+            'error',
+            'Hangi ayar bölümünün kaydedileceği anlaşılamadı. Formu yeniden gönderin.'
+        );
+    }
+
+    admin_verify('settings.php?sekme=' . $section);
+
+    $saved = [];
 
     switch ($section) {
         case 'genel':
@@ -128,7 +149,8 @@ if ($app->request()->isPost()) {
         );
     }
 
-    admin_redirect('settings.php?sekme=' . $tab, 'success', 'Ayarlar kaydedildi.');
+    // Kullanıcı kaydettiği bölümde kalır; $tab değil $section.
+    admin_redirect('settings.php?sekme=' . $section, 'success', 'Ayarlar kaydedildi.');
 }
 
 $page = [

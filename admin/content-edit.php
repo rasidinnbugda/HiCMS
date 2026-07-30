@@ -64,8 +64,48 @@ if ($app->request()->isPost()) {
     $entry->excerpt = trim((string) ($_POST['ozet'] ?? ''));
     $entry->status  = in_array($requested, $type->statuses, true) ? $requested : 'draft';
 
-    $blocks        = json_decode((string) ($_POST['bloklar'] ?? '[]'), true);
-    $entry->blocks = is_array($blocks) ? $blocks : [];
+    /*
+     * VERİ KAYBI KORUMASI.
+     *
+     * Blok ağacı yalnızca editor.js'in doldurduğu gizli `bloklar` alanından
+     * gelir. 0.2.0'da bu satır `$_POST['bloklar'] ?? '[]'` yazıyordu, yani:
+     *
+     *   - Alan HİÇ gelmezse    → '[]' → blocks = []  → İÇERİK SİLİNİR
+     *   - Alan boş gelirse     → ''   → null → []    → İÇERİK SİLİNİR
+     *   - JSON bozuk gelirse   → null → []           → İÇERİK SİLİNİR
+     *
+     * Üçü de gerçekleşebilir: JS yüklenmeden form gönderilirse, bir eklenti
+     * hata verip editörü kurmazsa, tarayıcı alanı kırparsa ya da istek yarıda
+     * kesilirse. Sonuç sessiz ve geri dönüşsüz bir içerik silme.
+     *
+     * Artık üç durum ayrı: yalnızca GEÇERLİ bir dizi geldiğinde bloklar
+     * değiştirilir. Aksi hâlde mevcut ağaç KORUNUR ve kullanıcı uyarılır —
+     * çünkü "boş içerik kaydetmek istedim" ile "editör çalışmadı" arasındaki
+     * farkı sunucu bilemez ve varsayılan davranış veriyi korumak olmalı.
+     *
+     * İçeriği gerçekten boşaltmak isteyen kullanıcı bunu editörde blokları
+     * silerek yapar; o durumda alan '[]' olarak gelir ve geçerli bir dizidir.
+     */
+    if (array_key_exists('bloklar', $_POST)) {
+        $raw     = (string) $_POST['bloklar'];
+        $decoded = $raw === '' ? null : json_decode($raw, true);
+
+        if (is_array($decoded)) {
+            $entry->blocks = $decoded;
+        } elseif (!$isNew) {
+            admin_flash(
+                'warning',
+                'İçerik blokları okunamadı; mevcut içerik korundu. Diğer alanlardaki '
+                . 'değişiklikler kaydedildi. Sayfayı yenileyip yeniden deneyin.'
+            );
+        }
+    } elseif (!$isNew) {
+        admin_flash(
+            'warning',
+            'İçerik blokları gönderilmedi; mevcut içerik korundu. Editör yüklenmediyse '
+            . 'sayfayı yenileyin.'
+        );
+    }
 
     $entry->featured     = isset($_POST['one_cikan']);
     $entry->commentsOpen = isset($_POST['yorumlar']);
@@ -110,18 +150,110 @@ if ($app->request()->isPost()) {
         $termSelection[$taxonomy->name] = array_values(array_unique(array_filter($selected)));
     }
 
-    // Özel alanlar
-    $meta = [];
+    /*
+     * ÖZEL ALANLAR — GÖNDERİLMEYEN ALAN EZİLMEZ
+     *
+     * 0.2.0 her alan için koşulsuz `$_POST['alan'][key] ?? null` yazıyordu.
+     * Formda karşılığı olmayan bir alan (o sürümde repeater ve media-list) ya da
+     * bir eklentinin sonradan bildirdiği ama bu formda basılmayan bir alan,
+     * her kaydetmede boş değere düşüyordu — kullanıcı o alana hiç dokunmasa bile.
+     *
+     * Artık yalnızca POST'ta GERÇEKTEN bulunan alanlar yazılıyor. `switch`
+     * istisna: işaretsiz onay kutusu POST'a hiç girmez ve bu "kapalı" demektir,
+     * dolayısıyla yokluğu bilgi taşır.
+     */
+    $meta   = [];
+    $posted = (array) ($_POST['alan'] ?? []);
 
     foreach ($type->fields as $field) {
-        $meta[$field->key] = $field->sanitize($_POST['alan'][$field->key] ?? null);
+        $present = array_key_exists($field->key, $posted);
+
+        if (!$present && $field->type !== 'switch') {
+            continue;
+        }
+
+        $clean = $field->sanitize($present ? $posted[$field->key] : null);
+
+        /*
+         * Yinelenen grupta bozuk JSON: temizleyici boş dizi döndürür ama
+         * kullanıcının yazım hatası veri kaybına çevrilmemeli. Gelen metin boş
+         * DEĞİLKEN sonuç boş çıktıysa yazma atlanır ve kullanıcı uyarılır.
+         */
+        if (
+            $field->type === 'repeater'
+            && $clean === []
+            && is_string($posted[$field->key] ?? null)
+            && trim((string) $posted[$field->key]) !== ''
+        ) {
+            admin_flash(
+                'warning',
+                Str::format('"%s" alanı okunamadı (geçersiz JSON); önceki değeri korundu.', $field->label)
+            );
+
+            continue;
+        }
+
+        $meta[$field->key] = $clean;
     }
 
-    $result = $app->content()->save($entry, $meta, $termSelection);
+    /*
+     * ÇAKIŞMA DENETİMİ
+     *
+     * Formda gizli `beklenen_surum` alanı var ve mevcut bir içerik için bu alanın
+     * BULUNMAMASI hata sayılır — geçilmez.
+     *
+     * 0.2.0 tasarımında denetim `(int) ($_POST['beklenen_surum'] ?? 0)` ile
+     * yapılacaktı ve sıfır "denetim yapma" anlamına geliyordu: alanı hiç
+     * göndermeyen bir istek — önbellekten açılmış eski bir sayfa, eksik
+     * gönderilen bir form, elle kurulmuş bir istek — kilidi tamamen atlıyordu.
+     * Yani kilit tam olarak korunması gereken durumda açıktı (fail-open).
+     */
+    $expected = null;
+
+    if (!$isNew) {
+        if (!array_key_exists('beklenen_surum', $_POST) || !ctype_digit((string) $_POST['beklenen_surum'])) {
+            admin_flash(
+                'error',
+                'Form eksik gönderildi (sürüm bilgisi yok); değişiklik kaydedilmedi. '
+                . 'Sayfayı yenileyip yeniden deneyin.'
+            );
+
+            admin_redirect($type->editUrl($entry->id), 'error', 'Kayıt güvenli biçimde durduruldu.');
+        }
+
+        $expected = (int) $_POST['beklenen_surum'];
+    }
+
+    $result = $app->content()->save($entry, $meta, $termSelection, $expected);
 
     if (!$result['ok']) {
+        /*
+         * Çakışmada kullanıcının yazdığı KAYBOLMAZ: reddedilen yük kendi
+         * otomatik kayıt slotuna yazılır ve sürüm geçmişinden geri alınabilir.
+         * Slot kullanıcı başına olduğu için diğer kullanıcının kaydını ezmez.
+         */
+        if (!empty($result['conflict'])) {
+            $app->content()->snapshot($entry, $app->auth()->id(), 'autosave');
+
+            admin_flash(
+                'error',
+                'Bu içerik siz düzenlerken başkası tarafından kaydedildi. Yazdıklarınız '
+                . 'kaybolmadı: sürüm geçmişinde "otomatik" kaydı olarak duruyor. '
+                . 'Sayfayı yenileyip karşılaştırın.'
+            );
+
+            admin_redirect($type->editUrl($entry->id), 'error', '');
+        }
+
         admin_flash('error', $result['error']);
     } else {
+        // Kaydedilen her hâl sürüm olarak saklanır; geri dönüş mümkün olsun.
+        $saved = $app->content()->find($result['id'], false);
+
+        if ($saved !== null) {
+            $app->content()->snapshot($saved, $app->auth()->id(), 'save');
+        }
+
         $app->audit()->record(
             action: $isNew ? 'content.create' : 'content.update',
             userId: $app->auth()->id(),
@@ -211,6 +343,19 @@ admin_head($page);
 <form id="entry-form" method="post" action="<?= esc_url($isNew ? $type->editUrl() : $type->editUrl($entry->id)) ?>" data-guard>
     <?= hi_csrf_field() ?>
 
+    <?php if (!$isNew) : ?>
+        <?php
+        /*
+         * İyimser kilit tabanı. Formu açtığınız andaki sürüm sayacı; kaydetmede
+         * sunucu bununla eşleşmezse araya başka bir yazma girmiş demektir ve
+         * kayıt reddedilir. Alanın yokluğu da hata sayılır (bkz. yukarısı) —
+         * yoksa eksik gönderilen bir istek kilidi atlar.
+         */
+        ?>
+        <input type="hidden" name="beklenen_surum"
+               value="<?= (int) $app->content()->revisionOf($entry->id) ?>">
+    <?php endif; ?>
+
     <div class="cols-editor">
         <div>
             <label class="sr-only" for="baslik">Başlık</label>
@@ -293,14 +438,46 @@ admin_head($page);
                                     'media'  => ui_input($name, (string) $value, [
                                         'type' => 'number', 'id' => $inputId, 'placeholder' => 'Medya kimliği',
                                     ]),
+
+                                    /*
+                                     * media-list ve repeater'ın KENDİ kolları olmak zorunda.
+                                     *
+                                     * 0.2.0'da ikisi de `default` koluna düşüyordu ve değerleri
+                                     * dizi olduğu için `is_scalar($value) ? … : ''` BOŞ bir metin
+                                     * kutusu basıyordu. Kullanıcı hiçbir şeye dokunmadan içeriği
+                                     * kaydettiğinde o boş değer yazılıyor ve kayıtlı liste
+                                     * SİLİNİYORDU — sessiz veri kaybı.
+                                     */
+                                    'media-list' => '<textarea class="input mono" id="' . esc_attr($inputId)
+                                        . '" name="' . esc_attr($name) . '" rows="3">'
+                                        . esc_html(is_array($value) ? implode(', ', array_map('strval', $value)) : '')
+                                        . '</textarea>',
+
+                                    'repeater' => '<textarea class="input mono" id="' . esc_attr($inputId)
+                                        . '" name="' . esc_attr($name) . '" rows="8">'
+                                        . esc_html(is_array($value)
+                                            ? (string) json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE
+                                                | JSON_UNESCAPED_SLASHES)
+                                            : '')
+                                        . '</textarea>',
+
                                     default  => ui_input($name, is_scalar($value) ? (string) $value : '', [
                                         'id' => $inputId, 'placeholder' => $field->placeholder,
                                     ]),
                                 };
 
+                                // İki tür için biçim ipucu yardım metnine eklenir.
+                                $help = $field->help;
+
+                                if ($field->type === 'media-list') {
+                                    $help = trim($help . ' Medya kimlikleri, virgül ya da satır sonuyla ayrılmış.');
+                                } elseif ($field->type === 'repeater') {
+                                    $help = trim($help . ' JSON dizisi. Bozuk JSON kaydedilmez, mevcut değer korunur.');
+                                }
+
                                 echo $field->type === 'switch'
                                     ? '<div class="field">' . $control . '</div>'
-                                    : ui_field($field->label, $control, esc_html($field->help), $inputId, $field->required);
+                                    : ui_field($field->label, $control, esc_html($help), $inputId, $field->required);
                                 ?>
                             <?php endforeach; ?>
                         </div>
@@ -372,10 +549,22 @@ admin_head($page);
                 </div>
                 <footer class="box-foot">
                     <?php if (!$isNew && $app->auth()->can('content.delete')) : ?>
-                        <a class="btn btn-sm btn-danger" href="content-delete.php?id=<?= (int) $entry->id ?>&amp;_t=<?= esc_attr(hi()->csrf()->token()) ?>"
-                           <?= ui_confirm('Bu içerik kalıcı olarak silinecek. Devam edilsin mi?') ?>>
+                        <?php
+                        /*
+                         * Silme POST ile. 0.2.0'da anahtarı sorgu dizesinde taşıyan
+                         * bir bağlantıydı; tarayıcı ön-getirmesi, bir bağlantı
+                         * önizleyicisi ya da geçmişten açılan sekme içeriği
+                         * silebiliyordu. GET durum değiştirmez.
+                         *
+                         * Düğme sayfanın altındaki gizli forma gönderilir; iç içe
+                         * form yasağı bu şekilde aşılıyor (paneldeki yerleşik kalıp).
+                         */
+                        ?>
+                        <button class="btn btn-sm btn-danger" type="submit"
+                                form="content-delete-form"
+                                <?= ui_confirm('Bu içerik kalıcı olarak silinecek. Devam edilsin mi?') ?>>
                             <?= admin_icon('trash', 14) ?>Sil
-                        </a>
+                        </button>
                     <?php endif; ?>
                     <span class="spacer"></span>
                     <button class="btn btn-sm btn-primary" type="submit">Kaydet</button>
@@ -483,6 +672,20 @@ admin_head($page);
     </div>
 </form>
 
+<?php if (!$isNew && $app->auth()->can('content.delete')) : ?>
+    <?php
+    /*
+     * Silme formu. Düzenleme formunun İÇİNDE olamaz (iç içe form yasak), o
+     * yüzden dışarıda duruyor ve silme düğmesi form="content-delete-form" ile
+     * buraya gönderiyor.
+     */
+    ?>
+    <form id="content-delete-form" method="post" action="content-delete.php" hidden>
+        <?= hi_csrf_field() ?>
+        <input type="hidden" name="id" value="<?= (int) $entry->id ?>">
+    </form>
+<?php endif; ?>
+
 <?php /* Medya seçme penceresi */ ?>
 <div class="modal" id="media-modal" hidden role="dialog" aria-modal="true" aria-labelledby="media-modal-title">
     <div class="modal-box is-wide">
@@ -517,15 +720,38 @@ admin_head($page);
     </div>
 </div>
 
-<script>
-    window.HI_EDITOR = {
-        types:  <?= esc_json($blockTypes) ?>,
-        blocks: <?= esc_json($entry->blocks) ?>,
-        media:  <?= esc_json($mediaMap) ?>,
-        icons:  <?= esc_json($iconMap) ?>
-    };
+<?php
+/*
+ * EDİTÖR VERİSİ BETİK DEĞİL, VERİ.
+ *
+ * 0.3.0'a kadar bu blok `window.HI_EDITOR = {…}` yazan satır içi bir betikti
+ * ve `<main>` içindeydi. Anında sayfa geçişi (nav.js) bölgeyi değiştirirken
+ * gelen işaretlemedeki <script> etiketleri ÇALIŞMAZ — HTML standardı böyle.
+ * Yani editöre geçildiğinde veri hiç kurulmuyor ve blok editörü ölüyordu.
+ *
+ * `type="application/json"` bir betik değil veri taşıyıcısıdır: çalıştırılmaz
+ * ama DOM'a bir öğe olarak girer, dolayısıyla bölge değişiminden sonra da
+ * okunabilir. editor.js onu ayrıştırıyor.
+ *
+ * İzin listesi de buradan gelir: richtext.js kendi satır içi etiket tablosunu
+ * taşıyordu; sunucudaki allowlist (src/Support/Html.php) değişince istemci
+ * sessizce ayrışır ve kullanıcı uyguladığı biçimin kaydedildikten sonra
+ * kaybolduğunu görür. Tek kaynak sunucu.
+ */
+?>
+<script type="application/json" id="hi-editor-data">
+    <?= esc_json([
+        'types'   => $blockTypes,
+        'blocks'  => $entry->blocks,
+        'media'   => $mediaMap,
+        'icons'   => $iconMap,
+        'allowed' => HiCMS\Support\Html::allowed(),
+    ]) ?>
 </script>
-<script src="assets/js/editor.js?v=<?= esc_attr(HiCMS\Kernel::VERSION) ?>"></script>
+
+<?php // richtext.js editor.js'ten ÖNCE: editör alan kurarken HiRichText hazır olmalı. ?>
+<script src="<?= esc_attr(admin_asset('assets/js/richtext.js')) ?>"></script>
+<script src="<?= esc_attr(admin_asset('assets/js/editor.js')) ?>"></script>
 <script>
     /* Öne çıkan görsel seçimi: medya penceresini editörden bağımsız kullanır. */
     (function () {
@@ -534,7 +760,7 @@ admin_head($page);
         var modal = document.getElementById('media-modal');
         if (!pick || !field || !modal) return;
 
-        var media = window.HI_EDITOR.media || {};
+        var media = (window.HI_EDITOR || {}).media || {};
 
         pick.addEventListener('click', function () {
             function choose(event) {

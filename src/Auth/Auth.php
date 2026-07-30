@@ -73,6 +73,30 @@ final class Auth
     }
 
     /**
+     * Oturum dosyasının kilidini bırakır.
+     *
+     * PHP'nin dosya tabanlı oturum deposu `session_start()` ile ÖZEL bir kilit
+     * alır ve isteğin sonuna kadar tutar. Aynı kullanıcıdan gelen ikinci istek
+     * bu kilidi bekler — yani eşzamanlı istekler sıraya girer.
+     *
+     * Bu, panelin "anında" hissetmesinin önündeki en büyük engeldi: otomatik
+     * kaydetme, kısmi güncelleme ve anlık arama hep aynı oturumdan paralel
+     * istek atar; kilit bunları tek tek çalıştırır. Üstüne yanıt gönderildikten
+     * sonra çalışan planlayıcı da kilidi elinde tutarak veritabanı işi yapıyor
+     * ve kullanıcının sıradaki isteğini bekletiyordu.
+     *
+     * Çağrıldıktan sonra `$_SESSION`'a yazmak SESSİZCE kaybolur. Bu yüzden
+     * yalnızca isteğin oturuma artık yazmayacağı kesin olduğu noktalarda
+     * çağrılır: yanıt gövdesi tamamlandıktan sonra.
+     */
+    public function closeSession(): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+    }
+
+    /**
      * Oturumdaki kullanıcıyı döndürür.
      */
     public function user(): ?User
@@ -359,6 +383,30 @@ final class Auth
     /**
      * Kalan bekleme süresi (saniye). 0 ise deneme yapılabilir.
      */
+    /**
+     * Giriş denemesi için beklenmesi gereken saniye.
+     *
+     * BİRİNCİL ÖLÇÜT KULLANICI ADI, IP DEĞİL.
+     *
+     * 0.2.0 yalnızca IP'ye bakıyordu ve `$identifier` parametresini alıp HİÇ
+     * kullanmıyordu. İki ayrı sorun:
+     *
+     *   1. Ters vekil arkasında (Cloudflare, nginx, paylaşımlı barındırma yük
+     *      dengeleyicisi) tüm ziyaretçiler aynı adresten görünür. Bir kişinin
+     *      beş hatalı denemesi SİTE ÇAPINDA girişi kilitliyordu — kimse
+     *      giremiyor ve yöneticinin bunu anlaması çok zor.
+     *   2. Vekil başlığı taklit edilebildiği için (bkz. Request::ip()) saldırgan
+     *      her istekte farklı bir "IP" göstererek sınırlamayı tamamen
+     *      atlıyordu.
+     *
+     * Kullanıcı adına dayanmak ikisini birden çözüyor: vekil arkasında da
+     * doğru çalışıyor ve taklit edilebilir bir girdiye bağlı değil.
+     *
+     * IP ölçütü KALDIRILMADI ama eşiği çok daha yüksek: farklı hesaplara
+     * yayılan saldırıyı (spray) yakalamak için var. Paylaşımlı bir adreste
+     * yirmi hatalı deneme olağan değil, ama bir kişinin beş hatası da tüm
+     * siteyi kilitlemiyor.
+     */
     public function throttleSeconds(string $ip, string $identifier = ''): int
     {
         if (!$this->db->tableExists('login_attempts')) {
@@ -367,29 +415,61 @@ final class Auth
 
         $window = Dates::stamp('-15 minutes');
 
-        $failures = $this->db->builder('login_attempts')
-            ->where('ip', $ip)
-            ->where('successful', 0)
-            ->whereRaw('attempted_at > :window', ['window' => $window])
-            ->count();
+        // 1. Kullanıcı adı ölçütü: sıkı, beşinci denemeden sonra gecikme.
+        $byIdentifier = 0;
 
-        if ($failures < 5) {
+        if (trim($identifier) !== '') {
+            $byIdentifier = $this->delayFor(
+                ['identifier' => mb_strtolower(trim($identifier))],
+                $window,
+                5
+            );
+        }
+
+        // 2. IP ölçütü: gevşek, yayılan saldırı için. Paylaşımlı adresi kilitlemez.
+        $byIp = $ip !== '' && $ip !== '0.0.0.0'
+            ? $this->delayFor(['ip' => $ip], $window, 20)
+            : 0;
+
+        return max($byIdentifier, $byIp);
+    }
+
+    /**
+     * Verilen ölçüt için kademeli gecikme.
+     *
+     * @param array<string, string> $match sütun → değer
+     */
+    private function delayFor(array $match, string $window, int $threshold): int
+    {
+        $query = $this->db->builder('login_attempts')
+            ->where('successful', 0)
+            ->whereRaw('attempted_at > :window', ['window' => $window]);
+
+        foreach ($match as $column => $value) {
+            $query->where($column, $value);
+        }
+
+        $failures = $query->count();
+
+        if ($failures < $threshold) {
             return 0;
         }
 
-        // 5. denemeden sonra kademeli gecikme: 30s, 60s, 120s … en çok 15 dk.
-        $delay = min(900, 30 * (2 ** ($failures - 5)));
+        // Eşikten sonra kademeli gecikme: 30s, 60s, 120s … en çok 15 dk.
+        $delay = min(900, 30 * (2 ** ($failures - $threshold)));
 
-        $last = $this->db->builder('login_attempts')
-            ->where('ip', $ip)
+        $lastQuery = $this->db->builder('login_attempts')
             ->where('successful', 0)
-            ->orderBy('id', 'desc')
-            ->value('attempted_at');
+            ->orderBy('id', 'desc');
 
+        foreach ($match as $column => $value) {
+            $lastQuery->where($column, $value);
+        }
+
+        $last     = $lastQuery->value('attempted_at');
         $lastTime = $last !== null ? (int) strtotime((string) $last) : 0;
-        $remaining = ($lastTime + $delay) - time();
 
-        return max(0, $remaining);
+        return max(0, ($lastTime + $delay) - time());
     }
 
     private function recordAttempt(string $ip, string $identifier, bool $successful): void
@@ -398,19 +478,40 @@ final class Auth
             return;
         }
 
+        /*
+         * Kullanıcı adı KÜÇÜK HARFE çevrilerek saklanır.
+         *
+         * Sınırlama kullanıcı adına dayandığı için normalleştirme şart: aksi
+         * hâlde `admin`, `Admin`, `ADMIN` ayrı anahtarlar olur ve saldırgan
+         * yalnızca harf büyüklüğünü değiştirerek sınırı sonsuza kadar atlar.
+         */
+        $key = mb_strtolower(trim($identifier), 'UTF-8');
+
         $this->db->insert('login_attempts', [
             'ip'           => $ip,
-            'identifier'   => mb_substr($identifier, 0, 180),
+            'identifier'   => mb_substr($key, 0, 180),
             'successful'   => $successful ? 1 : 0,
             'attempted_at' => Dates::stamp(),
         ]);
 
         if ($successful) {
-            // Başarılı girişte o IP'nin geçmiş hatalarını temizle.
+            /*
+             * Başarılı girişte HEM IP HEM kullanıcı adı geçmişi temizlenir.
+             * 0.2.0 yalnızca IP'yi temizliyordu; sınırlama artık kullanıcı adına
+             * dayandığı için o kayıtlar kalsaydı doğru şifreyi girmiş kullanıcı
+             * bir sonraki girişinde hâlâ bekletilirdi.
+             */
             $this->db->builder('login_attempts')
                 ->where('ip', $ip)
                 ->where('successful', 0)
                 ->delete();
+
+            if ($key !== '') {
+                $this->db->builder('login_attempts')
+                    ->where('identifier', mb_substr($key, 0, 180))
+                    ->where('successful', 0)
+                    ->delete();
+            }
         }
     }
 

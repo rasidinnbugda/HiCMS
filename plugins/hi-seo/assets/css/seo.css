@@ -1,0 +1,59 @@
+/* =========================================================================
+   HiSEO — panel stili
+
+   Yalnızca arama sonucu önizlemesi için. Geri kalan her şey panelin kendi
+   bileşen sözleşmesinden geliyor (.panel .box .field .input .pill .data);
+   eklentinin ikinci bir tasarım dili kurması yoğunluk sözleşmesini bozardı.
+
+   Renkler panel belirteçlerinden alınıyor, sabit değer yazılmıyor: karanlık
+   tema kendiliğinden çalışsın.
+   ========================================================================= */
+
+.seo-serp {
+    display: block;
+    max-width: 620px;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--surface-2);
+}
+
+.seo-serp-url {
+    display: block;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.seo-serp-title {
+    display: block;
+    margin-top: 3px;
+    font-size: 17px;
+    line-height: 1.3;
+    font-weight: var(--fw-mid);
+    color: var(--accent);
+}
+
+.seo-serp-title:empty::before {
+    content: '(başlık yok)';
+    color: var(--ink-4);
+}
+
+.seo-serp-text {
+    display: block;
+    margin-top: 4px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ink-2);
+}
+
+.seo-serp-text:empty::before {
+    content: '(açıklama yok)';
+    color: var(--ink-4);
+}
+
+/* Sınırı aşan sayaç: metin kırpılacak demektir. */
+.hint.is-over { color: var(--warn); }

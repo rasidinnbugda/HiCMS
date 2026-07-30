@@ -99,7 +99,9 @@ HiCMS/
 ├── themes/hiblog/       Varsayılan tema
 ├── plugins/             HiSEO · HiLang · HiTypes · HiForms · HiMedia
 ├── content/             Yüklemeler, yedekler, önbellek (yazılabilir olmalı)
-└── build/               lint.php · smoke.php · dbtest.php · updatetest.php · make-zip.php
+└── build/               lint.php · smoke.php · dbtest.php · plugintest.php
+                         updatetest.php · upgradetest.php · make-zip.php
+                         PLAN-0.3.0.md
 ```
 
 ---
@@ -363,8 +365,8 @@ geçici dosya temizliği.
 ## Geliştirme araçları
 
 ```bash
-php build/lint.php     # sözdizimi + autoloader denetimi (131 dosya)
-php build/smoke.php    # veritabanısız davranış testi (129 denetim)
+php build/lint.php     # sözdizimi + autoloader denetimi (167 dosya)
+php build/smoke.php    # veritabanısız davranış testi (273 denetim)
 php build/make-zip.php # dağıtım paketi üretir ve doğrular
 ```
 
@@ -382,11 +384,17 @@ php -S 127.0.0.1:8130 router.php
 php build/dbtest.php --url=http://127.0.0.1:8130 --user=root --pass=gizli --db=hicms_test
 ```
 
-`dbtest.php` (57 denetim): kurulum sihirbazını çalıştırır, 13 çekirdek tablonun
+`dbtest.php` (92 denetim): kurulum sihirbazını çalıştırır, çekirdek tabloların
 kurulduğunu doğrular, ön yüzün ve 20 panel sayfasının açıldığını görür, ardından
 içerik oluşturma / düzenleme / silme, terim ekleme, ayar kaydetme, eklenti
 etkinleştirme ve planlı görev çalıştırma işlemlerinin sonucunu doğrudan
-veritabanından okur.
+veritabanından okur. Ayrıca satır içi biçim gidiş-dönüşünü (editörün ürettiği
+HTML kaydedilip geri okunduğunda aynen duruyor mu, zararlısı düşüyor mu),
+iyimser kilidi (eski sayaçla ve alan hiç gelmeden kayıt reddediliyor mu) ve
+0.2.0'da bulunup düzeltilen altı güvenlik hatasının geri gelmediğini denetler.
+
+Bu betik hiç JavaScript kullanmaz; tamamının geçmesi aynı zamanda "JS kapalıyken
+panel çalışıyor" kanıtıdır.
 
 ```bash
 php build/make-zip.php
@@ -402,6 +410,31 @@ geri gelir) ve `config.php`, `content/`, `themes/`, `plugins/` içeriğinin
 dokunulmadan kaldığını doğrular. Bu akış `admin/system.php` üzerinden yürür —
 güncelleme kendi çalıştığı dizini yeniden yazdığı için bazı hatalar yalnızca
 burada görünür.
+
+```bash
+php build/plugintest.php http://127.0.0.1:8130 3306 hicms_test
+```
+
+`plugintest.php` (40 denetim): **beş eklentiyi birlikte** sınar. Her eklenti
+kendi başına test edilebilir ama gerçek risk beşinin aynı anda etkin olması:
+kanca çakışması, aynı ada iki blok kaydı, çelişkili meta etiketi, kapatma
+sırasında birbirinin kancasını sökme. Beşini etkinleştirir, 11 panel sayfasını
+ve 5 eklenti ekranını gezer, ön yüzü denetler, meta etiketlerinin mükerrer
+basılmadığını doğrular, sonra ters sırayla kapatıp her adımda sitenin ve panelin
+sağlam kaldığını görür.
+
+```bash
+php build/upgradetest.php /tmp/hicms-eski http://127.0.0.1:8196 3306 hicms_upgrade \
+    dist/hicms-0.2.0.zip dist/hicms-0.3.0.zip
+```
+
+`upgradetest.php` (20 denetim): **gerçek sürüm yükseltmesi.** `updatetest.php`
+aynı sürümü uyguladığı için migration çalıştırmaz; bu betik ESKİ paketle kurup
+YENİ paketi güncelleme olarak uygular. Yeni migration'ların mevcut kuruluma
+uygulandığını (tablo ve sütun eklendi mi), sürüm damgasının güncellendiğini,
+mevcut içerik/terim/ayarların korunduğunu ve yükseltmeden sonra ön yüz ile
+editörün çalıştığını doğrular. Güncellemeyi dağıtan bir CMS için en değerli
+test bu: şema değişikliği veri kaybettiriyorsa başka hiçbir şeyin önemi yok.
 
 ---
 
