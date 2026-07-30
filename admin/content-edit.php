@@ -525,7 +525,7 @@ admin_head($page);
         icons:  <?= esc_json($iconMap) ?>
     };
 </script>
-<script src="assets/js/editor.js?v=<?= esc_attr(HiCMS\Kernel::VERSION) ?>"></script>
+<script src="<?= esc_attr(admin_asset('assets/js/editor.js')) ?>"></script>
 <script>
     /* Öne çıkan görsel seçimi: medya penceresini editörden bağımsız kullanır. */
     (function () {

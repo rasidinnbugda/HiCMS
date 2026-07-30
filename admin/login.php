@@ -48,7 +48,7 @@ if ($app->request()->isPost()) {
 $flash = admin_take_flash();
 ?>
 <!DOCTYPE html>
-<html lang="tr" data-scheme="light">
+<html lang="tr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -56,17 +56,16 @@ $flash = admin_take_flash();
     <title>Giriş · <?= esc_html($app->siteName()) ?></title>
 
     <link rel="icon" href="assets/img/favicon.svg" type="image/svg+xml">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="assets/css/admin.css?v=<?= esc_attr(Kernel::VERSION) ?>">
+    <link rel="stylesheet" href="<?= esc_attr(admin_asset('assets/css/admin.css')) ?>">
 
+    <?php // Yalnızca kullanıcının açık seçimi; şemanın kendisi CSS'ten gelir. ?>
     <script>
         (function () {
             try {
                 var s = localStorage.getItem('hicms-scheme');
-                var dark = s ? s === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-                document.documentElement.setAttribute('data-scheme', dark ? 'dark' : 'light');
+                if (s === 'dark' || s === 'light') {
+                    document.documentElement.setAttribute('data-scheme', s);
+                }
             } catch (e) {}
         })();
     </script>
@@ -121,6 +120,6 @@ $flash = admin_take_flash();
     </div>
 </div>
 
-<script src="assets/js/admin.js?v=<?= esc_attr(Kernel::VERSION) ?>"></script>
+<script src="<?= esc_attr(admin_asset('assets/js/admin.js')) ?>"></script>
 </body>
 </html>
